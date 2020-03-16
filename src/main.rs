@@ -64,8 +64,8 @@ async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     srv_project.await
   });
 
-  let a = handle_internal.await?;
-  let b = handle_project.await?;
+  handle_internal.await??;
+  handle_project.await??;
 
   Ok(())
 }
