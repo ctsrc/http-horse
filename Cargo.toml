@@ -1,0 +1,17 @@
+[package]
+name = "hot-reload-server"
+description = "Hot reloading HTTP server for HTML, CSS, JavaScript and WebAssembly web development."
+license = "ISC"
+readme = "README.md"
+repository = "https://github.com/ctsrc/hot-reload-server"
+version = "0.0.0"
+authors = ["Erik Nordstrøm <erik@nordstroem.no>"]
+categories = ["web-programming::http-server", "development-tools", "filesystem"]
+keywords = ["autoreload", "html5", "css3", "js", "wasm"]
+edition = "2018"
+
+[dependencies]
+clap = { version = "2.33.0", default-features = false, features = ["yaml"] }
+notify = "4.0.15"
+tokio = { version = "0.2.13", features = ["macros", "rt-core", "fs", "io-std"] }
+hyper = "0.13.3"
