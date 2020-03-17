@@ -84,7 +84,8 @@ async fn request_handler_internal (req: Request<Body>) -> hyper::Result<Response
     _                 => method_not_allowed(),
   };
 
-  response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE));
+  response.headers_mut()
+    .insert(header::CACHE_CONTROL, HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE));
 
   Ok(response)
 }
@@ -103,7 +104,8 @@ async fn request_handler_project (req: Request<Body>) -> hyper::Result<Response<
     _                 => method_not_allowed(),
   };
 
-  response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE));
+  response.headers_mut()
+    .insert(header::CACHE_CONTROL, HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE));
 
   Ok(response)
 }
