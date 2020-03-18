@@ -1,0 +1,15 @@
+name: hot-reload-server
+about: Hot reloading HTTP server for HTML, CSS, JavaScript and WebAssembly web development.
+args:
+  - addr_internal:
+      long: managment-ui-listen-addr
+      short: m
+      help: Socket address on which managment UI server should listen.
+      takes_value: true
+      default_value: "127.0.0.1:8000"
+  - addr_project:
+      long: project-server-listen-addr
+      short: l
+      help: Socket address on which project server should listen.
+      takes_value: true
+      default_value: "127.0.0.1:8080"

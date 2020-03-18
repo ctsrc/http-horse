@@ -14,11 +14,13 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use clap::load_yaml;
+use clap::crate_version;
+use clap::App;
 use hyper::header;
 use hyper::header::HeaderValue;
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use hyper::service::{make_service_fn, service_fn};
-use std::net::SocketAddr;
 
 static NOT_FOUND_BODY_TEXT: &[u8] = b"HTTP 404. File not found.";
 static METHOD_NOT_ALLOWED_BODY_TEXT: &[u8] = b"HTTP 405. Method not allowed.";
@@ -33,11 +35,14 @@ static CACHE_CONTROL_VALUE_NO_STORE: &str = "no-store";
 #[tokio::main]
 async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 {
-  // Serving of hot-reload-server internal pages, showing status and history.
-  let handle_internal = tokio::spawn(async
-  {
-    let addr_internal: SocketAddr = ([127, 0, 0, 1], 8000).into();
+  let yaml = load_yaml!("cli.yaml");
+  let args = App::from_yaml(yaml).version(crate_version!()).get_matches();
+  let addr_internal = args.value_of("addr_internal").unwrap().parse()?;
+  let addr_project = args.value_of("addr_project").unwrap().parse()?;
 
+  // Serving of hot-reload-server internal pages, showing status and history.
+  let handle_internal = tokio::spawn(async move
+  {
     let srv_internal = Server::bind(&addr_internal)
       .tcp_nodelay(true)
       // XXX: ^ https://github.com/hyperium/hyper/issues/1997
@@ -54,10 +59,8 @@ async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
   });
 
   // Serving of files for the project that the user is working on.
-  let handle_project = tokio::spawn(async
+  let handle_project = tokio::spawn(async move
   {
-    let addr_project  = ([127, 0, 0, 1], 8080).into();
-
     let srv_project = Server::bind(&addr_project)
       .tcp_nodelay(true)
       .serve(make_service_fn(|_| {
