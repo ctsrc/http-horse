@@ -1,17 +1,73 @@
 <!doctype html>
 <html lang=en>
 <meta charset=utf-8>
-<title>hot-reload-server</title>
+<title>example/out – hot-reload-server</title>
+<meta name="viewport" content="width=device-width; initial-scale=1">
 <link rel=stylesheet href=/style/main.css>
 <div id=outer-main>
 <header id=header-main>
-  <h1>hot-reload-server</h1>
+  <h1><code>example/out/</code></h1>
 </header>
-<div id=inner-main>
-  <section id=client-state>
-  </section>
-  <section id=recent-fs-events>
-  </section>
+<ul id=inner-main>
+  <div id=file-pane>
+    <section id=file-serve-state>
+      <header>
+        <h2>File serve state</h2>
+        <ul id=files>
+          <li>
+            <div data-file=/index.htm data-filetype=html>
+              <code data-filename><a href=/>/index.htm</a></code>
+            </div>
+            <ul>
+              <li>
+                <div data-file=/js/main.js data-filetype=js>
+                  <code data-filename data-reverse-dep-count=2>/js/main.js</code>
+                </div>
+              <li>
+                <div data-file=/style/main.css data-filetype=css>
+                  <code data-filename data-reverse-dep-count=2>/style/main.css</code>
+                </div>
+            </ul>
+          <li>
+            <div data-file=/foo/bar data-filetype=html>
+              <code data-filename><a href=/foo/bar.htm>/foo/bar.htm</a></code>
+            </div>
+            <ul>
+              <li>
+                <div data-file data-filetype=js>
+                  <code data-filename data-reverse-dep-count=1>/js/foobar.js</code>
+                </div>
+              <li>
+                <div data-file data-filetype=css>
+                  <code data-filename data-reverse-dep-count=1>/style/foobar.css</code>
+                </div>
+              <li>
+                <div data-file data-filetype=js>
+                  <code data-filename data-reverse-dep-count=2>/js/main.js</code>
+                </div>
+              <li>
+                <div data-file data-filetype=css>
+                  <code data-filename data-reverse-dep-count=2>/style/main.css</code>
+                </div>
+            </ul>
+        </ul>
+      </header>
+    </section>
+    <section id=recent-file-history>
+      <header>
+        <h2>Recent file history</h2>
+        <div>
+          <p>entry</p>
+          <p>entry</p>
+          <p>entry</p>
+          <p>entry</p>
+          <p>entry</p>
+          <p>entry</p>
+          <p>entry</p>
+        </div>
+      </header>
+    </section>
+  </div>
 </div>
 </div>
 <script src=/js/main.js></script>

@@ -23,15 +23,19 @@ use std::net::SocketAddr;
 static NOT_FOUND_BODY_TEXT: &[u8] = b"HTTP 404. File not found.";
 static METHOD_NOT_ALLOWED_BODY_TEXT: &[u8] = b"HTTP 405. Method not allowed.";
 
+static INTERNAL_INDEX_PAGE: &[u8] = include_bytes!("../ui-src/html/index.htm");
+static INTERNAL_STYLESHEET: &[u8] = include_bytes!("../ui-src/style/main.css");
+static INTERNAL_JAVASCRIPT: &[u8] = include_bytes!("../ui-src/js/main.js");
+
 // XXX: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control#Directives
 static CACHE_CONTROL_VALUE_NO_STORE: &str = "no-store";
 
 #[tokio::main]
 async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 {
-
-  let handle_internal = tokio::spawn(async {
-    // address on which we serve hot-reload-server internal pages, showing status and history
+  // Serving of hot-reload-server internal pages, showing status and history.
+  let handle_internal = tokio::spawn(async
+  {
     let addr_internal: SocketAddr = ([127, 0, 0, 1], 8000).into();
 
     let srv_internal = Server::bind(&addr_internal)
@@ -49,8 +53,9 @@ async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     srv_internal.await
   });
 
-  let handle_project = tokio::spawn(async {
-    // address on which we serve the files for the project that the user is working on
+  // Serving of files for the project that the user is working on.
+  let handle_project = tokio::spawn(async
+  {
     let addr_project  = ([127, 0, 0, 1], 8080).into();
 
     let srv_project = Server::bind(&addr_project)
@@ -80,8 +85,11 @@ async fn request_handler_internal (req: Request<Body>) -> hyper::Result<Response
 
   let mut response = match (method, uri_path)
   {
-    (&Method::GET, _) => not_found(),
-    _                 => method_not_allowed(),
+    (&Method::GET, "/")               => Response::builder().body(INTERNAL_INDEX_PAGE.into()).unwrap(),
+    (&Method::GET, "/style/main.css") => Response::builder().body(INTERNAL_STYLESHEET.into()).unwrap(),
+    (&Method::GET, "/js/main.js")     => Response::builder().body(INTERNAL_JAVASCRIPT.into()).unwrap(),
+    (&Method::GET, _)                 => not_found(),
+    _                                 => method_not_allowed(),
   };
 
   response.headers_mut()
