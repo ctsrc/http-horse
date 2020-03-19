@@ -14,6 +14,8 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use std::net::SocketAddr;
+
 use clap::load_yaml;
 use clap::crate_version;
 use clap::App;
@@ -38,25 +40,34 @@ async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
 {
   let yaml = load_yaml!("cli.yaml");
   let args = App::from_yaml(yaml).version(crate_version!()).get_matches();
-  let addr_internal = args.value_of("addr_internal").unwrap().parse()?;
-  let addr_project = args.value_of("addr_project").unwrap().parse()?;
+  let listen_ip = args.value_of("listen_ip").unwrap().parse()?;
+  let port_status = args.value_of("port_status").unwrap().parse()?;
+  let port_project = args.value_of("port_project").unwrap().parse()?;
 
-  // Serving of hot-reload-server internal pages, showing status and history.
-  let handle_internal = tokio::spawn(async move
+  /*
+   * XXX: Listen on same IP address for both status and project servers
+   *      because clients speaking to the project server also need to
+   *      speak with the status server.
+   */
+  let addr_status = SocketAddr::new(listen_ip, port_status);
+  let addr_project = SocketAddr::new(listen_ip, port_project);
+
+  // Serving of hot-reload-server status pages, showing status and history.
+  let handle_status = tokio::spawn(async move
   {
-    let srv_internal = Server::bind(&addr_internal)
+    let srv_status = Server::bind(&addr_status)
       .tcp_nodelay(true)
       // XXX: ^ https://github.com/hyperium/hyper/issues/1997
       //        https://en.wikipedia.org/wiki/Nagle%27s_algorithm
       //        https://www.extrahop.com/company/blog/2016/tcp-nodelay-nagle-quickack-best-practices/
       .serve(make_service_fn(|_| {
-        async { Ok::<_, hyper::Error>(service_fn(request_handler_internal)) }
+        async { Ok::<_, hyper::Error>(service_fn(request_handler_status)) }
       }));
 
-    println!("Access your project through the hot-reload-server user interface.");
-    println!("hot-reload-server user interface is accessible at http://{}", addr_internal);
+    println!("Access your project through the hot-reload-server status user interface.");
+    println!("hot-reload-server status user interface is accessible at http://{}", addr_status);
 
-    srv_internal.await
+    srv_status.await
   });
 
   // Serving of files for the project that the user is working on.
@@ -73,17 +84,17 @@ async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
     srv_project.await
   });
 
-  handle_internal.await??;
+  handle_status.await??;
   handle_project.await??;
 
   Ok(())
 }
 
-async fn request_handler_internal (req: Request<Body>) -> hyper::http::Result<Response<Body>>
+async fn request_handler_status (req: Request<Body>) -> hyper::http::Result<Response<Body>>
 {
   let (method, uri_path) = (req.method(), req.uri().path());
 
-  println!("request_handler_internal got request");
+  println!("request_handler_status got request");
   println!("  Method:   {}", method);
   println!("  URI path: {}", uri_path);
 
