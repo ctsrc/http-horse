@@ -17,6 +17,7 @@
 use clap::load_yaml;
 use clap::crate_version;
 use clap::App;
+use hyper::http;
 use hyper::header;
 use hyper::header::HeaderValue;
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
@@ -78,7 +79,7 @@ async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
   Ok(())
 }
 
-async fn request_handler_internal (req: Request<Body>) -> hyper::Result<Response<Body>>
+async fn request_handler_internal (req: Request<Body>) -> hyper::http::Result<Response<Body>>
 {
   let (method, uri_path) = (req.method(), req.uri().path());
 
@@ -86,22 +87,20 @@ async fn request_handler_internal (req: Request<Body>) -> hyper::Result<Response
   println!("  Method:   {}", method);
   println!("  URI path: {}", uri_path);
 
-  let mut response = match (method, uri_path)
+  let response_builder = Response::builder()
+    .header(header::CACHE_CONTROL, HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE));
+
+  match (method, uri_path)
   {
-    (&Method::GET, "/")               => Response::builder().body(INTERNAL_INDEX_PAGE.into()).unwrap(),
-    (&Method::GET, "/style/main.css") => Response::builder().body(INTERNAL_STYLESHEET.into()).unwrap(),
-    (&Method::GET, "/js/main.js")     => Response::builder().body(INTERNAL_JAVASCRIPT.into()).unwrap(),
-    (&Method::GET, _)                 => not_found(),
-    _                                 => method_not_allowed(),
-  };
-
-  response.headers_mut()
-    .insert(header::CACHE_CONTROL, HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE));
-
-  Ok(response)
+    (&Method::GET, "/")               => response_builder.body(INTERNAL_INDEX_PAGE.into()),
+    (&Method::GET, "/style/main.css") => response_builder.body(INTERNAL_STYLESHEET.into()),
+    (&Method::GET, "/js/main.js")     => response_builder.body(INTERNAL_JAVASCRIPT.into()),
+    (&Method::GET, _)                 => not_found(response_builder),
+    _                                 => method_not_allowed(response_builder),
+  }
 }
 
-async fn request_handler_project (req: Request<Body>) -> hyper::Result<Response<Body>>
+async fn request_handler_project (req: Request<Body>) -> hyper::http::Result<Response<Body>>
 {
   let (method, uri_path) = (req.method(), req.uri().path());
 
@@ -109,31 +108,27 @@ async fn request_handler_project (req: Request<Body>) -> hyper::Result<Response<
   println!("  Method:   {}", method);
   println!("  URI path: {}", uri_path);
 
-  let mut response = match (method, uri_path)
+  let response_builder = Response::builder()
+    .header(header::CACHE_CONTROL, HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE));
+
+  match (method, uri_path)
   {
-    (&Method::GET, _) => not_found(),
-    _                 => method_not_allowed(),
-  };
-
-  response.headers_mut()
-    .insert(header::CACHE_CONTROL, HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE));
-
-  Ok(response)
+    (&Method::GET, _) => not_found(response_builder),
+    _                 => method_not_allowed(response_builder),
+  }
 }
 
-fn method_not_allowed () -> Response<Body>
+fn method_not_allowed (response_builder: http::response::Builder) -> hyper::http::Result<Response<Body>>
 {
-  Response::builder()
+  response_builder
     .status(StatusCode::METHOD_NOT_ALLOWED)
     .header(header::ALLOW, HeaderValue::from_static("GET"))
     .body(METHOD_NOT_ALLOWED_BODY_TEXT.into())
-    .unwrap()
 }
 
-fn not_found () -> Response<Body>
+fn not_found (response_builder: http::response::Builder) -> hyper::http::Result<Response<Body>>
 {
-  Response::builder()
+  response_builder
     .status(StatusCode::NOT_FOUND)
     .body(NOT_FOUND_BODY_TEXT.into())
-    .unwrap()
 }
