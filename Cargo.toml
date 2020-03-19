@@ -13,5 +13,6 @@ edition = "2018"
 [dependencies]
 clap = { version = "2.33.0", default-features = false, features = ["yaml"] }
 notify = "4.0.15"
+futures-util = "0.3.4"
 tokio = { version = "0.2.13", features = ["macros", "rt-core", "fs", "io-std"] }
 hyper = "0.13.3"

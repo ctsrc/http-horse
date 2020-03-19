@@ -19,6 +19,7 @@ use std::net::SocketAddr;
 use clap::load_yaml;
 use clap::crate_version;
 use clap::App;
+use futures_util::future::join;
 use hyper::http;
 use hyper::header;
 use hyper::header::HeaderValue;
@@ -52,40 +53,40 @@ async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
   let addr_status = SocketAddr::new(listen_ip, port_status);
   let addr_project = SocketAddr::new(listen_ip, port_project);
 
+  /*
+   * Try binding to the IP and port pairs for each of status and project servers.
+   * Additionally, enable TCP_NODELAY for accepted connections.
+   *
+   * XXX: For details about TCP_NODELAY, see
+   *      https://github.com/hyperium/hyper/issues/1997
+   *      https://en.wikipedia.org/wiki/Nagle%27s_algorithm
+   *      https://www.extrahop.com/company/blog/2016/tcp-nodelay-nagle-quickack-best-practices/
+   */
+  println!("Attempting to bind status server to {}", addr_status);
+  let srv_status = Server::try_bind(&addr_status)?.tcp_nodelay(true);
+  println!("Attempting to bind project server to {}", addr_project);
+  let srv_project = Server::try_bind(&addr_project)?.tcp_nodelay(true);
+
   // Serving of hot-reload-server status pages, showing status and history.
-  let handle_status = tokio::spawn(async move
-  {
-    let srv_status = Server::bind(&addr_status)
-      .tcp_nodelay(true)
-      // XXX: ^ https://github.com/hyperium/hyper/issues/1997
-      //        https://en.wikipedia.org/wiki/Nagle%27s_algorithm
-      //        https://www.extrahop.com/company/blog/2016/tcp-nodelay-nagle-quickack-best-practices/
-      .serve(make_service_fn(|_| {
-        async { Ok::<_, hyper::Error>(service_fn(request_handler_status)) }
-      }));
-
-    println!("Access your project through the hot-reload-server status user interface.");
-    println!("hot-reload-server status user interface is accessible at http://{}", addr_status);
-
-    srv_status.await
-  });
+  let srv_status = srv_status
+    .serve(make_service_fn(|_| {
+      async { Ok::<_, hyper::Error>(service_fn(request_handler_status)) }
+    }));
 
   // Serving of files for the project that the user is working on.
-  let handle_project = tokio::spawn(async move
-  {
-    let srv_project = Server::bind(&addr_project)
-      .tcp_nodelay(true)
-      .serve(make_service_fn(|_| {
-        async { Ok::<_, hyper::Error>(service_fn(request_handler_project)) }
-      }));
+  let srv_project = srv_project
+    .serve(make_service_fn(|_| {
+      async { Ok::<_, hyper::Error>(service_fn(request_handler_project)) }
+    }));
 
-    println!("Project server started.");
+  println!("Starting status and project servers.");
+  println!("Access your project through the hot-reload-server status user interface.");
+  println!("hot-reload-server status user interface is accessible at http://{}", addr_status);
 
-    srv_project.await
-  });
+  let ret = join(srv_status, srv_project).await;
 
-  handle_status.await??;
-  handle_project.await??;
+  ret.0?;
+  ret.1?;
 
   Ok(())
 }
