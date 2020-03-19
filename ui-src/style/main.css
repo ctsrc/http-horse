@@ -111,10 +111,6 @@ li > ul
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-}
-
-#file-serve-state
-{
   max-height: max-content;
 }
 
