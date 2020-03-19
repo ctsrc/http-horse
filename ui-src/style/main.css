@@ -70,6 +70,7 @@ li > ul
   height: 100vh;
   padding-top: 0.618rem;
   padding-bottom: 0.618rem;
+  background: cadetblue;
 }
 
 #header-main
@@ -77,24 +78,62 @@ li > ul
   padding-right: 1rem;
   padding-left: 1rem;
   overflow-x: hidden;
+  flex-shrink: 0;
 }
 
 #inner-main
 {
   flex-grow: 1;
+  flex-shrink: 1;
+  min-height: 0;
+  background: blueviolet;
+  display: flex;
+  flex-direction: row;
 }
 
 #file-pane
 {
   padding-right: 1rem;
   padding-left: 1rem;
+  flex-grow: 1;
+  flex-shrink: 1;
+  min-height: 0;
   max-width: 500px;
+  display: flex;
+  flex-direction: column;
 }
 
 #file-serve-state,
 #recent-file-history
 {
   margin-top: 1rem;
+  flex-grow: 1;
+  flex-shrink: 1;
+  flex-basis: 0;
+  background: darkgreen;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+#file-serve-state
+{
+  max-height: max-content;
+}
+
+#files
+{
+  background: thistle;
+  flex-shrink: 1;
+  overflow-y: auto;
+}
+
+#history-entries
+{
+  background: cyan;
+  flex-grow: 1;
+  flex-shrink: 1;
+  overflow-y: auto;
 }
 
 #files > li
