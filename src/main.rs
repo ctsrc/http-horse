@@ -93,7 +93,7 @@ async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
    *      But really, that's a lot of work for little actual benefit.
    *
    *      So what we are gonna do is, anytime a file or directory is moved into, within, or out
-   *      of the project directory, we create a temporary file, recursively rescan the project,
+   *      of the project directory, we create a temporary file, recursively rescan the project
    *      directory and "fast-forward" to the point in the stream where we see the creation of
    *      our temporary file. We do that same temporary file thing for the initial scan as well.
    *
