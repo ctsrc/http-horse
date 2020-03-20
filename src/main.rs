@@ -104,8 +104,9 @@ async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
    *        2. Our use-case revolves mainly around files being written to most of the
    *           time, and sometimes being created or deleted, and normally not being moved.
    *           So, whereas in contexts where there is a lot of moving going on it might
-   *           not make so much sense to do it like this, it does in our case and still
-   *           allows us to be quite robust in terms of our picture of the project dir.
+   *           not make so much sense to do it like this, it does in our case and also
+   *           helps keep the picture that we have of our project dir over time robust
+   *           (i.e. correctly corresponding to actual reality).
    *
    *      So all in all this is actually a good solution we have here, I think.
    */
