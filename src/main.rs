@@ -15,10 +15,12 @@
  */
 
 use std::net::SocketAddr;
+use std::fs::metadata;
 
 use clap::load_yaml;
 use clap::crate_version;
 use clap::App;
+use fsevent;
 use futures_util::future::join;
 use hyper::http;
 use hyper::header;
@@ -44,14 +46,23 @@ async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
   let listen_ip = args.value_of("listen_ip").unwrap().parse()?;
   let port_status = args.value_of("port_status").unwrap().parse()?;
   let port_project = args.value_of("port_project").unwrap().parse()?;
+  let project_dir = args.value_of("project_dir").unwrap();
+
+  let project_dir_md = metadata(project_dir)?;
+  if !project_dir_md.is_dir()
+  {
+    return Err(format!("File is not a directory: {}", project_dir).into());
+  }
+
+  let project_dir = project_dir.to_string();
 
   /*
    * XXX: Listen on same IP address for both status and project servers
    *      because clients speaking to the project server also need to
    *      speak with the status server.
    */
-  let addr_status = SocketAddr::new(listen_ip, port_status);
-  let addr_project = SocketAddr::new(listen_ip, port_project);
+  let status_addr = SocketAddr::new(listen_ip, port_status);
+  let project_addr = SocketAddr::new(listen_ip, port_project);
 
   /*
    * Try binding to the IP and port pairs for each of status and project servers.
@@ -62,33 +73,129 @@ async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
    *      https://en.wikipedia.org/wiki/Nagle%27s_algorithm
    *      https://www.extrahop.com/company/blog/2016/tcp-nodelay-nagle-quickack-best-practices/
    */
-  println!("Attempting to bind status server to {}", addr_status);
-  let srv_status = Server::try_bind(&addr_status)?.tcp_nodelay(true);
-  println!("Attempting to bind project server to {}", addr_project);
-  let srv_project = Server::try_bind(&addr_project)?.tcp_nodelay(true);
+  println!("Attempting to bind status server to {}", status_addr);
+  let status_server_builder = Server::try_bind(&status_addr)?.tcp_nodelay(true);
+  println!("Attempting to bind project server to {}", project_addr);
+  let project_server_builder = Server::try_bind(&project_addr)?.tcp_nodelay(true);
 
-  // Serving of hot-reload-server status pages, showing status and history.
-  let srv_status = srv_status
+  /*
+   * We monitor FS events in the project dir using the Apple
+   * File System Events API via the fsevent crate.
+   *
+   * XXX: Hardlink creation does not result in any corresponding event.
+   *      Issue for this filed at https://github.com/octplane/fsevent-rust/issues/27
+   *
+   * XXX: When files are moved, two events are generated. One for the source file path,
+   *      and one for the target file path. Because we are choosing to subscribe to events
+   *      for the project directory only, we don't see "the other half" of a pair of events
+   *      where a file is moved into or out of the project directory. Now, we could of course
+   *      monitor the whole file system, and do our best to correlate all moves that affect us.
+   *      But really, that's a lot of work for little actual benefit.
+   *
+   *      So what we are gonna do is, anytime a file or directory is moved into, within, or out
+   *      of the project directory, we create a temporary file, recursively rescan the project,
+   *      directory and "fast-forward" to the point in the stream where we see the creation of
+   *      our temporary file. We do that same temporary file thing for the initial scan as well.
+   *
+   *      And if you think it's weird to do it that way, keep in mind that:
+   *
+   *        1. The information provided by the FSE API is only advisory anyway, and
+   *
+   *        2. Our use-case revolves mainly around files being written to most of the
+   *           time, and sometimes being created or deleted, and normally not being moved.
+   *           So, whereas in contexts where there was a lot of moving going on it might
+   *           not make so much sense to do it like this, it does in our case and still
+   *           allows us to be quite robust in terms of our picture of the project dir.
+   *
+   *      So all in all this is actually a good solution we have here, I think.
+   */
+
+  let (fs_event_tx, fs_event_rx) = std::sync::mpsc::channel();
+
+  let fs_event_observer_task = tokio::task::spawn_blocking(move ||
+  {
+    let fs_observer = fsevent::FsEvent::new(vec![project_dir]);
+    fs_observer.observe(fs_event_tx);
+  });
+
+  let fs_event_transformer_task = tokio::task::spawn_blocking(move ||
+  {
+    // TODO: Sleep for like 15ms or something
+    // TODO: Create temp file
+    // TODO: Scan project-dir
+    loop
+    {
+      match fs_event_rx.recv()
+      {
+        Ok(fs_ev) =>
+        {
+          if false // TODO: If temp file is Some
+          {
+            if false // TODO: If fs_ev path == temp file path
+            {
+              // TODO: Delete temp file and set variable to None
+            }
+            else
+            {
+              println!("(fast-forwarding) skipping event: {:?}", fs_ev);
+            }
+          }
+          else
+          {
+            if false // TODO: If event type is move
+            {
+              // TODO: Create temp file
+              // TODO: Rescan project-dir
+            }
+            else
+            {
+              println!("fs event: {:?}", fs_ev)
+            }
+          }
+        },
+        Err(e) => println!("fs event recv error!"),
+      };
+    }
+  });
+
+  /*
+   * Serving of hot-reload-server status pages, showing status and history.
+   */
+  let status_server = status_server_builder
     .serve(make_service_fn(|_| {
       async { Ok::<_, hyper::Error>(service_fn(request_handler_status)) }
     }));
 
-  // Serving of files for the project that the user is working on.
-  let srv_project = srv_project
+  /*
+   * Serving of files for the project that the user is working on.
+   */
+  let project_server = project_server_builder
     .serve(make_service_fn(|_| {
       async { Ok::<_, hyper::Error>(service_fn(request_handler_project)) }
     }));
 
   println!("Starting status and project servers.");
   println!("Access your project through the hot-reload-server status user interface.");
-  println!("hot-reload-server status user interface is accessible at http://{}", addr_status);
+  println!("hot-reload-server status user interface is accessible at http://{}", status_addr);
 
-  let ret = join(srv_status, srv_project).await;
+  let fs_event_tasks = join(fs_event_observer_task, fs_event_transformer_task);
+  let servers = join(status_server, project_server);
+  let ret = join(fs_event_tasks, servers).await;
 
-  ret.0?;
-  ret.1?;
+  (ret.0).0?;
+  (ret.0).1?;
+  (ret.1).0?;
+  (ret.1).1?;
 
   Ok(())
+}
+
+fn connect_event_stream (response_builder: http::response::Builder) -> hyper::http::Result<Response<Body>>
+{
+  let (sender, body) = hyper::body::Body::channel();
+
+  response_builder
+    .body(body)
 }
 
 async fn request_handler_status (req: Request<Body>) -> hyper::http::Result<Response<Body>>
@@ -107,6 +214,7 @@ async fn request_handler_status (req: Request<Body>) -> hyper::http::Result<Resp
     (&Method::GET, "/")               => response_builder.body(INTERNAL_INDEX_PAGE.into()),
     (&Method::GET, "/style/main.css") => response_builder.body(INTERNAL_STYLESHEET.into()),
     (&Method::GET, "/js/main.js")     => response_builder.body(INTERNAL_JAVASCRIPT.into()),
+    (&Method::GET, "/event-stream/")  => connect_event_stream(response_builder),
     (&Method::GET, _)                 => not_found(response_builder),
     _                                 => method_not_allowed(response_builder),
   }

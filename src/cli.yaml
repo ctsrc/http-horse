@@ -20,3 +20,6 @@ args:
       help: Port which project server should listen on.
       takes_value: true
       default_value: "8080"
+  - project_dir:
+      help: Project directory.
+      default_value: "."
