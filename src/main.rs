@@ -79,8 +79,8 @@ async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
   let project_server_builder = Server::try_bind(&project_addr)?.tcp_nodelay(true);
 
   /*
-   * We monitor FS events in the project dir using the Apple
-   * File System Events API via the fsevent crate.
+   * We monitor FS events in the project dir using the
+   * Apple File System Events API via the fsevent crate.
    *
    * XXX: Hardlink creation does not result in any corresponding event.
    *      Issue for this filed at https://github.com/octplane/fsevent-rust/issues/27
