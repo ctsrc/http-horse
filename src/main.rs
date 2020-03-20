@@ -29,9 +29,9 @@ use hyper::service::{make_service_fn, service_fn};
 static NOT_FOUND_BODY_TEXT: &[u8] = b"HTTP 404. File not found.";
 static METHOD_NOT_ALLOWED_BODY_TEXT: &[u8] = b"HTTP 405. Method not allowed.";
 
-static INTERNAL_INDEX_PAGE: &[u8] = include_bytes!("../ui-src/html/index.htm");
-static INTERNAL_STYLESHEET: &[u8] = include_bytes!("../ui-src/style/main.css");
-static INTERNAL_JAVASCRIPT: &[u8] = include_bytes!("../ui-src/js/main.js");
+static INTERNAL_INDEX_PAGE: &[u8] = include_bytes!("../webui-src/html/index.htm");
+static INTERNAL_STYLESHEET: &[u8] = include_bytes!("../webui-src/style/main.css");
+static INTERNAL_JAVASCRIPT: &[u8] = include_bytes!("../webui-src/js/main.js");
 
 // XXX: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control#Directives
 static CACHE_CONTROL_VALUE_NO_STORE: &str = "no-store";
