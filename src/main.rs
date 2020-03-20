@@ -194,6 +194,8 @@ fn connect_event_stream (response_builder: http::response::Builder) -> hyper::ht
 {
   let (sender, body) = hyper::body::Body::channel();
 
+  // TODO: Connect the thing
+
   response_builder
     .body(body)
 }
