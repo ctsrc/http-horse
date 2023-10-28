@@ -14,19 +14,19 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::net::SocketAddr;
 use std::fs::metadata;
+use std::net::SocketAddr;
 
-use clap::load_yaml;
 use clap::crate_version;
+use clap::load_yaml;
 use clap::App;
 use fsevent;
 use futures_util::future::join;
-use hyper::http;
 use hyper::header;
 use hyper::header::HeaderValue;
-use hyper::{Body, Method, Request, Response, Server, StatusCode};
+use hyper::http;
 use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Method, Request, Response, Server, StatusCode};
 
 static NOT_FOUND_BODY_TEXT: &[u8] = b"HTTP 404. File not found.";
 static METHOD_NOT_ALLOWED_BODY_TEXT: &[u8] = b"HTTP 405. Method not allowed.";
@@ -39,219 +39,210 @@ static INTERNAL_JAVASCRIPT: &[u8] = include_bytes!("../webui-src/js/main.js");
 static CACHE_CONTROL_VALUE_NO_STORE: &str = "no-store";
 
 #[tokio::main]
-async fn main () -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-{
-  let yaml = load_yaml!("cli.yaml");
-  let args = App::from_yaml(yaml).version(crate_version!()).get_matches();
-  let listen_ip = args.value_of("listen_ip").unwrap().parse()?;
-  let port_status = args.value_of("port_status").unwrap().parse()?;
-  let port_project = args.value_of("port_project").unwrap().parse()?;
-  let project_dir = args.value_of("project_dir").unwrap();
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let yaml = load_yaml!("cli.yaml");
+    let args = App::from_yaml(yaml).version(crate_version!()).get_matches();
+    let listen_ip = args.value_of("listen_ip").unwrap().parse()?;
+    let port_status = args.value_of("port_status").unwrap().parse()?;
+    let port_project = args.value_of("port_project").unwrap().parse()?;
+    let project_dir = args.value_of("project_dir").unwrap();
 
-  let project_dir_md = metadata(project_dir)?;
-  if !project_dir_md.is_dir()
-  {
-    return Err(format!("File is not a directory: {}", project_dir).into());
-  }
-
-  let project_dir = project_dir.to_string();
-
-  /*
-   * XXX: Listen on same IP address for both status and project servers
-   *      because clients speaking to the project server also need to
-   *      speak with the status server.
-   */
-  let status_addr = SocketAddr::new(listen_ip, port_status);
-  let project_addr = SocketAddr::new(listen_ip, port_project);
-
-  /*
-   * Try binding to the IP and port pairs for each of status and project servers.
-   * Additionally, enable TCP_NODELAY for accepted connections.
-   *
-   * XXX: For details about TCP_NODELAY, see
-   *      https://github.com/hyperium/hyper/issues/1997
-   *      https://en.wikipedia.org/wiki/Nagle%27s_algorithm
-   *      https://www.extrahop.com/company/blog/2016/tcp-nodelay-nagle-quickack-best-practices/
-   */
-  println!("Attempting to bind status server to {}", status_addr);
-  let status_server_builder = Server::try_bind(&status_addr)?.tcp_nodelay(true);
-  println!("Attempting to bind project server to {}", project_addr);
-  let project_server_builder = Server::try_bind(&project_addr)?.tcp_nodelay(true);
-
-  /*
-   * We monitor FS events in the project dir using the
-   * Apple File System Events API via the fsevent crate.
-   *
-   * XXX: Hardlink creation does not result in any corresponding event.
-   *      Issue for this filed at https://github.com/octplane/fsevent-rust/issues/27
-   *
-   * XXX: When files are moved, two events are generated. One for the source file path,
-   *      and one for the target file path. Because we are choosing to subscribe to events
-   *      for the project directory only, we don't see "the other half" of a pair of events
-   *      where a file is moved into or out of the project directory. Now, we could of course
-   *      monitor the whole file system, and do our best to correlate all moves that affect us.
-   *      But really, that's a lot of work for little actual benefit.
-   *
-   *      So what we are gonna do is, anytime a file or directory is moved into, within, or out
-   *      of the project directory, we create a temporary file, recursively rescan the project
-   *      directory and "fast-forward" to the point in the stream where we see the creation of
-   *      our temporary file. We do that same temporary file thing for the initial scan as well.
-   *
-   *      And if you think it's weird to do it that way, keep in mind that:
-   *
-   *        1. The information provided by the FSE API is only advisory anyway, and
-   *
-   *        2. Our use-case revolves mainly around files being written to most of the
-   *           time, and sometimes being created or deleted, and normally not being moved.
-   *           So, whereas in contexts where there is a lot of moving going on it might
-   *           not make so much sense to do it like this, it does in our case and also
-   *           helps keep the picture that we have of our project dir over time robust
-   *           (i.e. correctly corresponding to actual reality).
-   *
-   *      So all in all this is actually a good solution we have here, I think.
-   */
-
-  let (fs_event_tx, fs_event_rx) = std::sync::mpsc::channel();
-
-  let fs_event_observer_task = tokio::task::spawn_blocking(move ||
-  {
-    let fs_observer = fsevent::FsEvent::new(vec![project_dir]);
-    fs_observer.observe(fs_event_tx);
-  });
-
-  let fs_event_transformer_task = tokio::task::spawn_blocking(move ||
-  {
-    // TODO: Sleep for like 15ms or something
-    // TODO: Create temp file
-    // TODO: Scan project-dir
-    loop
-    {
-      match fs_event_rx.recv()
-      {
-        Ok(fs_ev) =>
-        {
-          if false // TODO: If temp file is Some
-          {
-            if false // TODO: If fs_ev path == temp file path
-            {
-              // TODO: Delete temp file and set variable to None
-            }
-            else
-            {
-              println!("(fast-forwarding) skipping event: {:?}", fs_ev);
-            }
-          }
-          else
-          {
-            if false // TODO: If event type is move
-            {
-              // TODO: Create temp file
-              // TODO: Rescan project-dir
-            }
-            else
-            {
-              println!("fs event: {:?}", fs_ev)
-            }
-          }
-        },
-        Err(e) => println!("fs event recv error!"),
-      };
+    let project_dir_md = metadata(project_dir)?;
+    if !project_dir_md.is_dir() {
+        return Err(format!("File is not a directory: {}", project_dir).into());
     }
-  });
 
-  /*
-   * Serving of hot-reload-server status pages, showing status and history.
-   */
-  let status_server = status_server_builder
-    .serve(make_service_fn(|_| {
-      async { Ok::<_, hyper::Error>(service_fn(request_handler_status)) }
+    let project_dir = project_dir.to_string();
+
+    /*
+     * XXX: Listen on same IP address for both status and project servers
+     *      because clients speaking to the project server also need to
+     *      speak with the status server.
+     */
+    let status_addr = SocketAddr::new(listen_ip, port_status);
+    let project_addr = SocketAddr::new(listen_ip, port_project);
+
+    /*
+     * Try binding to the IP and port pairs for each of status and project servers.
+     * Additionally, enable TCP_NODELAY for accepted connections.
+     *
+     * XXX: For details about TCP_NODELAY, see
+     *      https://github.com/hyperium/hyper/issues/1997
+     *      https://en.wikipedia.org/wiki/Nagle%27s_algorithm
+     *      https://www.extrahop.com/company/blog/2016/tcp-nodelay-nagle-quickack-best-practices/
+     */
+    println!("Attempting to bind status server to {}", status_addr);
+    let status_server_builder = Server::try_bind(&status_addr)?.tcp_nodelay(true);
+    println!("Attempting to bind project server to {}", project_addr);
+    let project_server_builder = Server::try_bind(&project_addr)?.tcp_nodelay(true);
+
+    /*
+     * We monitor FS events in the project dir using the
+     * Apple File System Events API via the fsevent crate.
+     *
+     * XXX: Hardlink creation does not result in any corresponding event.
+     *      Issue for this filed at https://github.com/octplane/fsevent-rust/issues/27
+     *
+     * XXX: When files are moved, two events are generated. One for the source file path,
+     *      and one for the target file path. Because we are choosing to subscribe to events
+     *      for the project directory only, we don't see "the other half" of a pair of events
+     *      where a file is moved into or out of the project directory. Now, we could of course
+     *      monitor the whole file system, and do our best to correlate all moves that affect us.
+     *      But really, that's a lot of work for little actual benefit.
+     *
+     *      So what we are gonna do is, anytime a file or directory is moved into, within, or out
+     *      of the project directory, we create a temporary file, recursively rescan the project
+     *      directory and "fast-forward" to the point in the stream where we see the creation of
+     *      our temporary file. We do that same temporary file thing for the initial scan as well.
+     *
+     *      And if you think it's weird to do it that way, keep in mind that:
+     *
+     *        1. The information provided by the FSE API is only advisory anyway, and
+     *
+     *        2. Our use-case revolves mainly around files being written to most of the
+     *           time, and sometimes being created or deleted, and normally not being moved.
+     *           So, whereas in contexts where there is a lot of moving going on it might
+     *           not make so much sense to do it like this, it does in our case and also
+     *           helps keep the picture that we have of our project dir over time robust
+     *           (i.e. correctly corresponding to actual reality).
+     *
+     *      So all in all this is actually a good solution we have here, I think.
+     */
+
+    let (fs_event_tx, fs_event_rx) = std::sync::mpsc::channel();
+
+    let fs_event_observer_task = tokio::task::spawn_blocking(move || {
+        let fs_observer = fsevent::FsEvent::new(vec![project_dir]);
+        fs_observer.observe(fs_event_tx);
+    });
+
+    let fs_event_transformer_task = tokio::task::spawn_blocking(move || {
+        // TODO: Sleep for like 15ms or something
+        // TODO: Create temp file
+        // TODO: Scan project-dir
+        loop {
+            match fs_event_rx.recv() {
+                Ok(fs_ev) => {
+                    if false
+                    // TODO: If temp file is Some
+                    {
+                        if false
+                        // TODO: If fs_ev path == temp file path
+                        {
+                            // TODO: Delete temp file and set variable to None
+                        } else {
+                            println!("(fast-forwarding) skipping event: {:?}", fs_ev);
+                        }
+                    } else {
+                        if false
+                        // TODO: If event type is move
+                        {
+                            // TODO: Create temp file
+                            // TODO: Rescan project-dir
+                        } else {
+                            println!("fs event: {:?}", fs_ev)
+                        }
+                    }
+                }
+                Err(e) => println!("fs event recv error!"),
+            };
+        }
+    });
+
+    /*
+     * Serving of hot-reload-server status pages, showing status and history.
+     */
+    let status_server = status_server_builder.serve(make_service_fn(|_| async {
+        Ok::<_, hyper::Error>(service_fn(request_handler_status))
     }));
 
-  /*
-   * Serving of files for the project that the user is working on.
-   */
-  let project_server = project_server_builder
-    .serve(make_service_fn(|_| {
-      async { Ok::<_, hyper::Error>(service_fn(request_handler_project)) }
+    /*
+     * Serving of files for the project that the user is working on.
+     */
+    let project_server = project_server_builder.serve(make_service_fn(|_| async {
+        Ok::<_, hyper::Error>(service_fn(request_handler_project))
     }));
 
-  println!("Starting status and project servers.");
-  println!("Access your project through the hot-reload-server status user interface.");
-  println!("hot-reload-server status user interface is accessible at http://{}", status_addr);
+    println!("Starting status and project servers.");
+    println!("Access your project through the hot-reload-server status user interface.");
+    println!(
+        "hot-reload-server status user interface is accessible at http://{}",
+        status_addr
+    );
 
-  let fs_event_tasks = join(fs_event_observer_task, fs_event_transformer_task);
-  let servers = join(status_server, project_server);
-  let ret = join(fs_event_tasks, servers).await;
+    let fs_event_tasks = join(fs_event_observer_task, fs_event_transformer_task);
+    let servers = join(status_server, project_server);
+    let ret = join(fs_event_tasks, servers).await;
 
-  (ret.0).0?;
-  (ret.0).1?;
-  (ret.1).0?;
-  (ret.1).1?;
+    (ret.0).0?;
+    (ret.0).1?;
+    (ret.1).0?;
+    (ret.1).1?;
 
-  Ok(())
+    Ok(())
 }
 
-fn connect_event_stream (response_builder: http::response::Builder) -> hyper::http::Result<Response<Body>>
-{
-  let (sender, body) = hyper::body::Body::channel();
+fn connect_event_stream(
+    response_builder: http::response::Builder,
+) -> hyper::http::Result<Response<Body>> {
+    let (sender, body) = hyper::body::Body::channel();
 
-  // TODO: Connect the thing
+    // TODO: Connect the thing
 
-  response_builder
-    .body(body)
+    response_builder.body(body)
 }
 
-async fn request_handler_status (req: Request<Body>) -> hyper::http::Result<Response<Body>>
-{
-  let (method, uri_path) = (req.method(), req.uri().path());
+async fn request_handler_status(req: Request<Body>) -> hyper::http::Result<Response<Body>> {
+    let (method, uri_path) = (req.method(), req.uri().path());
 
-  println!("request_handler_status got request");
-  println!("  Method:   {}", method);
-  println!("  URI path: {}", uri_path);
+    println!("request_handler_status got request");
+    println!("  Method:   {}", method);
+    println!("  URI path: {}", uri_path);
 
-  let response_builder = Response::builder()
-    .header(header::CACHE_CONTROL, HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE));
+    let response_builder = Response::builder().header(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE),
+    );
 
-  match (method, uri_path)
-  {
-    (&Method::GET, "/")               => response_builder.body(INTERNAL_INDEX_PAGE.into()),
-    (&Method::GET, "/style/main.css") => response_builder.body(INTERNAL_STYLESHEET.into()),
-    (&Method::GET, "/js/main.js")     => response_builder.body(INTERNAL_JAVASCRIPT.into()),
-    (&Method::GET, "/event-stream/")  => connect_event_stream(response_builder),
-    (&Method::GET, _)                 => not_found(response_builder),
-    _                                 => method_not_allowed(response_builder),
-  }
+    match (method, uri_path) {
+        (&Method::GET, "/") => response_builder.body(INTERNAL_INDEX_PAGE.into()),
+        (&Method::GET, "/style/main.css") => response_builder.body(INTERNAL_STYLESHEET.into()),
+        (&Method::GET, "/js/main.js") => response_builder.body(INTERNAL_JAVASCRIPT.into()),
+        (&Method::GET, "/event-stream/") => connect_event_stream(response_builder),
+        (&Method::GET, _) => not_found(response_builder),
+        _ => method_not_allowed(response_builder),
+    }
 }
 
-async fn request_handler_project (req: Request<Body>) -> hyper::http::Result<Response<Body>>
-{
-  let (method, uri_path) = (req.method(), req.uri().path());
+async fn request_handler_project(req: Request<Body>) -> hyper::http::Result<Response<Body>> {
+    let (method, uri_path) = (req.method(), req.uri().path());
 
-  println!("request_handler_project got request");
-  println!("  Method:   {}", method);
-  println!("  URI path: {}", uri_path);
+    println!("request_handler_project got request");
+    println!("  Method:   {}", method);
+    println!("  URI path: {}", uri_path);
 
-  let response_builder = Response::builder()
-    .header(header::CACHE_CONTROL, HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE));
+    let response_builder = Response::builder().header(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE),
+    );
 
-  match (method, uri_path)
-  {
-    (&Method::GET, _) => not_found(response_builder),
-    _                 => method_not_allowed(response_builder),
-  }
+    match (method, uri_path) {
+        (&Method::GET, _) => not_found(response_builder),
+        _ => method_not_allowed(response_builder),
+    }
 }
 
-fn method_not_allowed (response_builder: http::response::Builder) -> hyper::http::Result<Response<Body>>
-{
-  response_builder
-    .status(StatusCode::METHOD_NOT_ALLOWED)
-    .header(header::ALLOW, HeaderValue::from_static("GET"))
-    .body(METHOD_NOT_ALLOWED_BODY_TEXT.into())
+fn method_not_allowed(
+    response_builder: http::response::Builder,
+) -> hyper::http::Result<Response<Body>> {
+    response_builder
+        .status(StatusCode::METHOD_NOT_ALLOWED)
+        .header(header::ALLOW, HeaderValue::from_static("GET"))
+        .body(METHOD_NOT_ALLOWED_BODY_TEXT.into())
 }
 
-fn not_found (response_builder: http::response::Builder) -> hyper::http::Result<Response<Body>>
-{
-  response_builder
-    .status(StatusCode::NOT_FOUND)
-    .body(NOT_FOUND_BODY_TEXT.into())
+fn not_found(response_builder: http::response::Builder) -> hyper::http::Result<Response<Body>> {
+    response_builder
+        .status(StatusCode::NOT_FOUND)
+        .body(NOT_FOUND_BODY_TEXT.into())
 }
