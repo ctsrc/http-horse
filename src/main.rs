@@ -16,7 +16,6 @@
 
 use std::fs::metadata;
 use std::net::SocketAddr;
-
 use clap::crate_version;
 use clap::load_yaml;
 use clap::App;
