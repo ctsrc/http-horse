@@ -77,6 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if !project_dir_md.is_dir() {
         return Err(format!("File is not a directory: {project_dir}").into());
     }
+    PROJECT_DIR.set(project_dir.clone())?;
 
     let status_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
     let status_tcp = TcpListener::bind(status_addr)?;
