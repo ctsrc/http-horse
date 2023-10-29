@@ -48,7 +48,7 @@ with any kind of build system and it will hot reload the page in the browser for
 you when the build system changes any of the relevant files in the out-dir.
 
 ```zsh
-cd example/www/
+cd example/
 make
 ```
 
