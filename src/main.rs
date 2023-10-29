@@ -14,18 +14,16 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-use std::fs::metadata;
-use std::net::SocketAddr;
-use clap::crate_version;
-use clap::load_yaml;
-use clap::App;
+use clap::Parser;
 use fsevent;
 use futures_util::future::join;
-use hyper::header;
 use hyper::header::HeaderValue;
 use hyper::http;
 use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Method, Request, Response, Server, StatusCode};
+use hyper::{header, Server};
+use hyper::{Body, Method, Request, Response, StatusCode};
+use std::fs::metadata;
+use std::net::{IpAddr, SocketAddr};
 
 static NOT_FOUND_BODY_TEXT: &[u8] = b"HTTP 404. File not found.";
 static METHOD_NOT_ALLOWED_BODY_TEXT: &[u8] = b"HTTP 405. Method not allowed.";
@@ -37,29 +35,37 @@ static INTERNAL_JAVASCRIPT: &[u8] = include_bytes!("../webui-src/js/main.js");
 // XXX: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control#Directives
 static CACHE_CONTROL_VALUE_NO_STORE: &str = "no-store";
 
+#[derive(Parser, Debug)]
+#[command(author, version, about)]
+struct Cli {
+    /// Project directory
+    dir: String,
+    /// Address to serve project on
+    #[arg(short = 'l', long, default_value = "::1")]
+    project_listen_addr: IpAddr,
+    /// Port to serve project on
+    #[arg(short = 'p', long, default_value_t = 0)]
+    project_listen_port: u16,
+    /// Address to serve status on
+    #[arg(short = 's', long, default_value = "::1")]
+    status_listen_addr: IpAddr,
+    /// Port to serve status on
+    #[arg(short = 'q', long, default_value_t = 0)]
+    status_listen_port: u16,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let yaml = load_yaml!("cli.yaml");
-    let args = App::from_yaml(yaml).version(crate_version!()).get_matches();
-    let listen_ip = args.value_of("listen_ip").unwrap().parse()?;
-    let port_status = args.value_of("port_status").unwrap().parse()?;
-    let port_project = args.value_of("port_project").unwrap().parse()?;
-    let project_dir = args.value_of("project_dir").unwrap();
+    let args = Cli::parse();
 
-    let project_dir_md = metadata(project_dir)?;
+    let project_dir = args.dir;
+    let project_dir_md = metadata(project_dir.clone())?;
     if !project_dir_md.is_dir() {
-        return Err(format!("File is not a directory: {}", project_dir).into());
+        return Err(format!("File is not a directory: {project_dir}").into());
     }
 
-    let project_dir = project_dir.to_string();
-
-    /*
-     * XXX: Listen on same IP address for both status and project servers
-     *      because clients speaking to the project server also need to
-     *      speak with the status server.
-     */
-    let status_addr = SocketAddr::new(listen_ip, port_status);
-    let project_addr = SocketAddr::new(listen_ip, port_project);
+    let status_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
+    let project_addr = SocketAddr::new(args.status_listen_addr, args.status_listen_port);
 
     /*
      * Try binding to the IP and port pairs for each of status and project servers.
@@ -111,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (fs_event_tx, fs_event_rx) = std::sync::mpsc::channel();
 
     let fs_event_observer_task = tokio::task::spawn_blocking(move || {
-        let fs_observer = fsevent::FsEvent::new(vec![project_dir]);
+        let fs_observer = fsevent::FsEvent::new(vec![project_dir.clone()]);
         fs_observer.observe(fs_event_tx);
     });
 
@@ -143,7 +149,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         }
                     }
                 }
-                Err(e) => println!("fs event recv error!"),
+                Err(_e) => println!("fs event recv error!"),
             };
         }
     });
@@ -184,7 +190,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 fn connect_event_stream(
     response_builder: http::response::Builder,
 ) -> hyper::http::Result<Response<Body>> {
-    let (sender, body) = hyper::body::Body::channel();
+    let (_sender, body) = hyper::body::Body::channel();
 
     // TODO: Connect the thing
 

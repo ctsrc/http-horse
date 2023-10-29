@@ -11,8 +11,8 @@ keywords = ["autoreload", "html5", "css3", "js", "wasm"]
 edition = "2018"
 
 [dependencies]
-clap = { version = "2.33.0", default-features = false, features = ["yaml"] }
-fsevent = "2.0.1"
-futures-util = "0.3.4"
-tokio = { version = "0.2.13", features = ["macros", "rt-core", "fs", "io-std"] }
-hyper = "0.13.3"
+clap = { version = "4", features = ["cargo", "derive"] }
+fsevent = "2"
+futures-util = "0.3"
+tokio = { version = "1", features = ["full"] }
+hyper = { version = "0.14", features = ["full"] }
