@@ -14,5 +14,7 @@ edition = "2018"
 clap = { version = "4", features = ["cargo", "derive"] }
 fsevent = "2"
 futures-util = "0.3"
-tokio = { version = "1", features = ["full"] }
 hyper = { version = "0.14", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"

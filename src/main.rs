@@ -14,6 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+use clap::crate_version;
 use clap::Parser;
 use fsevent;
 use futures_util::future::join;
@@ -23,7 +24,8 @@ use hyper::service::{make_service_fn, service_fn};
 use hyper::{header, Server};
 use hyper::{Body, Method, Request, Response, StatusCode};
 use std::fs::metadata;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, SocketAddr, TcpListener};
+use tracing::{debug, error, info};
 
 static NOT_FOUND_BODY_TEXT: &[u8] = b"HTTP 404. File not found.";
 static METHOD_NOT_ALLOWED_BODY_TEXT: &[u8] = b"HTTP 405. Method not allowed.";
@@ -39,6 +41,7 @@ static CACHE_CONTROL_VALUE_NO_STORE: &str = "no-store";
 #[command(author, version, about)]
 struct Cli {
     /// Project directory
+    #[arg(default_value = ".")]
     dir: String,
     /// Address to serve project on
     #[arg(short = 'l', long, default_value = "::1")]
@@ -56,6 +59,11 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // install global collector configured based on RUST_LOG env var.
+    tracing_subscriber::fmt::init();
+
+    info!("Starting hot-reload-server v{}", crate_version!());
+
     let args = Cli::parse();
 
     let project_dir = args.dir;
@@ -65,7 +73,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     let status_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
+    let status_tcp = TcpListener::bind(status_addr)?;
+    let status_addr = status_tcp.local_addr()?;
+    info!("Status server will listen on http://{status_addr}");
+
     let project_addr = SocketAddr::new(args.status_listen_addr, args.status_listen_port);
+    let project_tcp = TcpListener::bind(project_addr)?;
+    let project_addr = project_tcp.local_addr()?;
+    info!("Project server will listen on http://{project_addr}");
 
     /*
      * Try binding to the IP and port pairs for each of status and project servers.
@@ -76,10 +91,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
      *      https://en.wikipedia.org/wiki/Nagle%27s_algorithm
      *      https://www.extrahop.com/company/blog/2016/tcp-nodelay-nagle-quickack-best-practices/
      */
-    println!("Attempting to bind status server to {}", status_addr);
-    let status_server_builder = Server::try_bind(&status_addr)?.tcp_nodelay(true);
-    println!("Attempting to bind project server to {}", project_addr);
-    let project_server_builder = Server::try_bind(&project_addr)?.tcp_nodelay(true);
+    debug!("Attempting to bind status server to {}", status_addr);
+    let status_server_builder = Server::from_tcp(status_tcp)?.tcp_nodelay(true);
+    debug!("Attempting to bind project server to {}", project_addr);
+    let project_server_builder = Server::from_tcp(project_tcp)?.tcp_nodelay(true);
 
     /*
      * We monitor FS events in the project dir using the
@@ -136,7 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         {
                             // TODO: Delete temp file and set variable to None
                         } else {
-                            println!("(fast-forwarding) skipping event: {:?}", fs_ev);
+                            debug!("(fast-forwarding) skipping event: {:?}", fs_ev);
                         }
                     } else {
                         if false
@@ -145,11 +160,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             // TODO: Create temp file
                             // TODO: Rescan project-dir
                         } else {
-                            println!("fs event: {:?}", fs_ev)
+                            info!("fs event: {:?}", fs_ev)
                         }
                     }
                 }
-                Err(_e) => println!("fs event recv error!"),
+                Err(_e) => error!("fs event recv error!"),
             };
         }
     });
@@ -168,9 +183,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok::<_, hyper::Error>(service_fn(request_handler_project))
     }));
 
-    println!("Starting status and project servers.");
-    println!("Access your project through the hot-reload-server status user interface.");
-    println!(
+    info!("Starting status and project servers.");
+    info!("Access your project through the hot-reload-server status user interface.");
+    info!(
         "hot-reload-server status user interface is accessible at http://{}",
         status_addr
     );
@@ -200,9 +215,9 @@ fn connect_event_stream(
 async fn request_handler_status(req: Request<Body>) -> hyper::http::Result<Response<Body>> {
     let (method, uri_path) = (req.method(), req.uri().path());
 
-    println!("request_handler_status got request");
-    println!("  Method:   {}", method);
-    println!("  URI path: {}", uri_path);
+    debug!("request_handler_status got request");
+    debug!("  Method:   {}", method);
+    debug!("  URI path: {}", uri_path);
 
     let response_builder = Response::builder().header(
         header::CACHE_CONTROL,
@@ -222,9 +237,9 @@ async fn request_handler_status(req: Request<Body>) -> hyper::http::Result<Respo
 async fn request_handler_project(req: Request<Body>) -> hyper::http::Result<Response<Body>> {
     let (method, uri_path) = (req.method(), req.uri().path());
 
-    println!("request_handler_project got request");
-    println!("  Method:   {}", method);
-    println!("  URI path: {}", uri_path);
+    debug!("request_handler_project got request");
+    debug!("  Method:   {}", method);
+    debug!("  URI path: {}", uri_path);
 
     let response_builder = Response::builder().header(
         header::CACHE_CONTROL,
