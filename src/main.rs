@@ -26,6 +26,7 @@ use std::fs::metadata;
 use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::path::Path;
 use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::fs::File;
 use tokio_util::codec::{BytesCodec, FramedRead};
 use tracing::{debug, error, info};
@@ -143,31 +144,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
 
     let fs_event_transformer_task = tokio::task::spawn_blocking(move || {
-        // TODO: Sleep for like 15ms or something
-        // TODO: Create temp file
-        // TODO: Scan project-dir
+        std::thread::sleep(Duration::from_millis(15));
+        // TODO: Create initial temp file in project dir
+        // TODO: Start a timer so we can check how long has passed since we created initial temp file.
+        // TODO: Initial scan of project dir
+        'skip_up_to_temp_file: loop {
+            match fs_event_rx.recv() {
+                Ok(fs_ev) => {
+                    debug!("fs event: {:?}", fs_ev);
+                    if false
+                    // TODO: If this event corresponds to the creation of the initial temp file
+                    {
+                        break 'skip_up_to_temp_file;
+                    } else {
+                        // TODO: Check how much time has passed since initial temp file was created
+                        // TODO: If more than 30 seconds has passed, create a new temp file
+                        //       and rescan project dir. Skip all events up to new temp file.
+                    }
+                }
+                Err(_e) => error!("fs event recv error!"),
+            };
+        }
         loop {
             match fs_event_rx.recv() {
                 Ok(fs_ev) => {
                     if false
-                    // TODO: If temp file is Some
+                    // TODO: If event type is move
                     {
-                        if false
-                        // TODO: If fs_ev path == temp file path
-                        {
-                            // TODO: Delete temp file and set variable to None
-                        } else {
-                            debug!("(fast-forwarding) skipping event: {:?}", fs_ev);
+                        // TODO: Create temp file in project dir
+                        // TODO: Start a timer so we can check how long has passed since we created temp file.
+                        // TODO: Rescan of project dir
+                        'skip_up_to_temp_file: loop {
+                            match fs_event_rx.recv() {
+                                Ok(fs_ev) => {
+                                    debug!("fs event: {:?}", fs_ev);
+                                    if false
+                                    // TODO: If this event corresponds to the creation of the temp file
+                                    {
+                                        break 'skip_up_to_temp_file;
+                                    } else {
+                                        // TODO: Check how much time has passed since temp file was created
+                                        // TODO: If more than n seconds has passed, create a new temp file
+                                        //       and rescan project dir. Skip all events up to new temp file.
+                                        //       n is exponentially increasing for each time this happens,
+                                        //       up to an upper limit of 10 minutes.
+                                    }
+                                }
+                                Err(_e) => error!("fs event recv error!"),
+                            };
                         }
                     } else {
-                        if false
-                        // TODO: If event type is move
-                        {
-                            // TODO: Create temp file
-                            // TODO: Rescan project-dir
-                        } else {
-                            info!("fs event: {:?}", fs_ev)
-                        }
+                        info!("fs event: {:?}", fs_ev)
                     }
                 }
                 Err(_e) => error!("fs event recv error!"),
