@@ -1,6 +1,6 @@
 [package]
 name = "http-horse"
-description = "Hot reloading HTTP server for HTML, CSS, JavaScript and WebAssembly web development."
+description = "HTTP Hot Reload Server for HTML, CSS, JavaScript and WebAssembly web development."
 license = "ISC"
 readme = "README.md"
 repository = "https://github.com/ctsrc/http-horse"
