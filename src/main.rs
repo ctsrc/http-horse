@@ -86,17 +86,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Project pages will be served on http://{project_addr}");
 
     /*
-     * Try binding to the IP and port pairs for each of status and project servers.
-     * Additionally, enable TCP_NODELAY for accepted connections.
+     * Create server builders for status and project.
+     * Enable TCP_NODELAY for accepted connections.
      *
      * XXX: For details about TCP_NODELAY, see
      *      https://github.com/hyperium/hyper/issues/1997
      *      https://en.wikipedia.org/wiki/Nagle%27s_algorithm
      *      https://www.extrahop.com/company/blog/2016/tcp-nodelay-nagle-quickack-best-practices/
      */
-    debug!("Attempting to bind status server to {}", status_addr);
     let status_server_builder = Server::from_tcp(status_tcp)?.tcp_nodelay(true);
-    debug!("Attempting to bind project server to {}", project_addr);
     let project_server_builder = Server::from_tcp(project_tcp)?.tcp_nodelay(true);
 
     /*
