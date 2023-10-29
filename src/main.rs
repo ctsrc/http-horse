@@ -24,12 +24,15 @@ use hyper::{header, Server};
 use hyper::{Body, Method, Request, Response, StatusCode};
 use std::fs::metadata;
 use std::net::{IpAddr, SocketAddr, TcpListener};
+use std::path::Path;
+use std::sync::OnceLock;
 use tokio::fs::File;
 use tokio_util::codec::{BytesCodec, FramedRead};
 use tracing::{debug, error, info};
 
 static NOT_FOUND_BODY_TEXT: &[u8] = b"HTTP 404. File not found.";
 static METHOD_NOT_ALLOWED_BODY_TEXT: &[u8] = b"HTTP 405. Method not allowed.";
+static INTERNAL_SERVER_ERROR_BODY_TEXT: &[u8] = b"HTTP 500. Internal server error.";
 
 static INTERNAL_INDEX_PAGE: &[u8] = include_bytes!("../webui-src/html/index.htm");
 static INTERNAL_STYLESHEET: &[u8] = include_bytes!("../webui-src/style/main.css");
@@ -58,6 +61,8 @@ struct Cli {
     status_listen_port: u16,
 }
 
+static PROJECT_DIR: OnceLock<String> = OnceLock::new();
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // install global collector configured based on RUST_LOG env var.
@@ -67,13 +72,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let args = Cli::parse();
 
-    let project_dir = args.dir;
+    let project_dir = args.dir.clone();
     let project_dir_md = metadata(project_dir.clone())?;
     if !project_dir_md.is_dir() {
         return Err(format!("File is not a directory: {project_dir}").into());
     }
-
-    std::env::set_current_dir(&project_dir)?;
 
     let status_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
     let status_tcp = TcpListener::bind(status_addr)?;
@@ -132,8 +135,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let (fs_event_tx, fs_event_rx) = std::sync::mpsc::channel();
 
+    let pdir = project_dir.clone();
     let fs_event_observer_task = tokio::task::spawn_blocking(move || {
-        let fs_observer = fsevent::FsEvent::new(vec![project_dir.clone()]);
+        let fs_observer = fsevent::FsEvent::new(vec![pdir.clone()]);
         fs_observer.observe(fs_event_tx);
     });
 
@@ -184,6 +188,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok::<_, hyper::Error>(service_fn(request_handler_project))
     }));
 
+    let fs_event_tasks = join(fs_event_observer_task, fs_event_transformer_task);
+
     info!("Starting status and project servers.");
     info!("Access your project through the hot-reload-server status user interface.");
     info!(
@@ -191,7 +197,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         status_addr
     );
 
-    let fs_event_tasks = join(fs_event_observer_task, fs_event_transformer_task);
     let servers = join(status_server, project_server);
     let ret = join(fs_event_tasks, servers).await;
 
@@ -233,7 +238,7 @@ async fn request_handler_status(req: Request<Body>) -> http::Result<Response<Bod
     }
 }
 
-async fn request_handler_project(req: Request<Body>) -> hyper::http::Result<Response<Body>> {
+async fn request_handler_project(req: Request<Body>) -> http::Result<Response<Body>> {
     let (method, uri_path) = (req.method(), req.uri().path());
 
     debug!("request_handler_project got request");
@@ -245,17 +250,21 @@ async fn request_handler_project(req: Request<Body>) -> hyper::http::Result<Resp
         HeaderValue::from_static(CACHE_CONTROL_VALUE_NO_STORE),
     );
 
+    let Some(project_dir) = PROJECT_DIR.get() else {
+        return server_error(response_builder);
+    };
+
     match (method, uri_path) {
         (&Method::GET, _) => {
             if uri_path == "/" {
                 // 1. Try file "index.htm"
-                if let Ok(file) = File::open("index.htm").await {
+                if let Ok(file) = File::open(Path::new(project_dir).join("index.htm")).await {
                     let stream = FramedRead::new(file, BytesCodec::new());
                     let body = Body::wrap_stream(stream);
                     return Ok(Response::new(body));
                 }
                 // 2. Try file "index.html"
-                if let Ok(file) = File::open("index.html").await {
+                if let Ok(file) = File::open(Path::new(project_dir).join("index.html")).await {
                     let stream = FramedRead::new(file, BytesCodec::new());
                     let body = Body::wrap_stream(stream);
                     return Ok(Response::new(body));
@@ -270,6 +279,12 @@ async fn request_handler_project(req: Request<Body>) -> hyper::http::Result<Resp
         }
         _ => method_not_allowed(response_builder),
     }
+}
+
+fn server_error(response_builder: http::response::Builder) -> http::Result<Response<Body>> {
+    response_builder
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(INTERNAL_SERVER_ERROR_BODY_TEXT.into())
 }
 
 fn method_not_allowed(response_builder: http::response::Builder) -> http::Result<Response<Body>> {
