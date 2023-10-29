@@ -1,14 +1,14 @@
 [package]
-name = "hot-reload-server"
+name = "http-horse"
 description = "Hot reloading HTTP server for HTML, CSS, JavaScript and WebAssembly web development."
 license = "ISC"
 readme = "README.md"
-repository = "https://github.com/ctsrc/hot-reload-server"
+repository = "https://github.com/ctsrc/http-horse"
 version = "0.0.0"
 authors = ["Erik Nordstrøm <erik@nordstroem.no>"]
 categories = ["web-programming::http-server", "development-tools", "filesystem"]
 keywords = ["autoreload", "html5", "css3", "js", "wasm"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 bytes = "1"

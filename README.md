@@ -1,8 +1,6 @@
-# hot-reload-server
+# http-horse
 
-[![Crates.io](https://img.shields.io/crates/v/hot-reload-server.svg)](https://crates.io/crates/hot-reload-server)
-
-Hot reloading HTTP server for HTML, CSS, JavaScript and WebAssembly web development.
+HTTP Hot Reload Server for HTML, CSS, JavaScript and WebAssembly web development.
 
 ## Usage
 
@@ -16,15 +14,15 @@ Serve the out-dir. In this case:
 RUST_LOG=debug cargo run -- ./example/out/
 ```
 
-The log output will tell you the address and port for the two servers that `hot-reload-server` runs;
+The log output will tell you the address and port for the two servers that `http-horse` runs;
 one server for the status page, and one server for the project page.
 
 For example:
 
 ```text
 […]
-2023-10-29T02:37:44.974101Z  INFO hot_reload_server: Status pages will be served on http://[::1]:58124
-2023-10-29T02:37:44.974124Z  INFO hot_reload_server: Project pages will be served on http://[::1]:58125
+2023-10-29T05:06:49.278038Z  INFO http_horse: Status pages will be served on http://[::1]:59917
+2023-10-29T05:06:49.278089Z  INFO http_horse: Project pages will be served on http://[::1]:59918
 […]
 ```
 
@@ -34,7 +32,7 @@ Open the status page and the project page in your web browser.
 
 Make a change to one or more of the HTML, CSS, JS, or other web files.
 
-In the case of the example web files included with `hot-reload-server` you find them
+In the case of the example web files included with `http-horse` you find them
 in `example/www/` under the root of the repo.
 
 ```zsh
@@ -43,7 +41,7 @@ $EDITOR ./example/www/index.htm
 
 ### Build edited project
 
-In the example project we use a Makefile. However, you can use `hot-reload-server`
+In the example project we use a Makefile. However, you can use `http-horse`
 with any kind of build system and it will hot reload the page in the browser for
 you when the build system changes any of the relevant files in the out-dir.
 
@@ -60,7 +58,7 @@ in the out-dir.
 
 ## Advanced usage
 
-Instead of manually invoking the build system, you can tell `hot-reload-server`
+Instead of manually invoking the build system, you can tell `http-horse`
 where the source files are, and what command to run in order to run the build system.
 
 (Implementation of this feature has not yet started.)

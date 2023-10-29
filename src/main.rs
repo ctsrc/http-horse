@@ -68,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // install global collector configured based on RUST_LOG env var.
     tracing_subscriber::fmt::init();
 
-    info!("Starting hot-reload-server v{}", crate_version!());
+    info!("Starting http-horse v{}", crate_version!());
 
     let args = Cli::parse();
 
@@ -176,7 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     });
 
     /*
-     * Serving of hot-reload-server status pages, showing status and history.
+     * Serving of status pages, showing status and history.
      */
     let status_server = status_server_builder.serve(make_service_fn(|_| async {
         Ok::<_, hyper::Error>(service_fn(request_handler_status))
@@ -192,9 +192,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let fs_event_tasks = join(fs_event_observer_task, fs_event_transformer_task);
 
     info!("Starting status and project servers.");
-    info!("Access your project through the hot-reload-server status user interface.");
+    info!("Access your project through the http-horse status user interface.");
     info!(
-        "hot-reload-server status user interface is accessible at http://{}",
+        "http-horse status user interface is accessible at http://{}",
         status_addr
     );
 
