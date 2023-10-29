@@ -24,6 +24,8 @@ use hyper::{header, Server};
 use hyper::{Body, Method, Request, Response, StatusCode};
 use std::fs::metadata;
 use std::net::{IpAddr, SocketAddr, TcpListener};
+use tokio::fs::File;
+use tokio_util::codec::{BytesCodec, FramedRead};
 use tracing::{debug, error, info};
 
 static NOT_FOUND_BODY_TEXT: &[u8] = b"HTTP 404. File not found.";
@@ -71,15 +73,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         return Err(format!("File is not a directory: {project_dir}").into());
     }
 
+    std::env::set_current_dir(&project_dir)?;
+
     let status_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
     let status_tcp = TcpListener::bind(status_addr)?;
     let status_addr = status_tcp.local_addr()?;
-    info!("Status server will listen on http://{status_addr}");
+    info!("Status pages will be served on http://{status_addr}");
 
     let project_addr = SocketAddr::new(args.status_listen_addr, args.status_listen_port);
     let project_tcp = TcpListener::bind(project_addr)?;
     let project_addr = project_tcp.local_addr()?;
-    info!("Project server will listen on http://{project_addr}");
+    info!("Project pages will be served on http://{project_addr}");
 
     /*
      * Try binding to the IP and port pairs for each of status and project servers.
@@ -244,7 +248,28 @@ async fn request_handler_project(req: Request<Body>) -> hyper::http::Result<Resp
     );
 
     match (method, uri_path) {
-        (&Method::GET, _) => not_found(response_builder),
+        (&Method::GET, _) => {
+            if uri_path == "/" {
+                // 1. Try file "index.htm"
+                if let Ok(file) = File::open("index.htm").await {
+                    let stream = FramedRead::new(file, BytesCodec::new());
+                    let body = Body::wrap_stream(stream);
+                    return Ok(Response::new(body));
+                }
+                // 2. Try file "index.html"
+                if let Ok(file) = File::open("index.html").await {
+                    let stream = FramedRead::new(file, BytesCodec::new());
+                    let body = Body::wrap_stream(stream);
+                    return Ok(Response::new(body));
+                }
+                // 3. Return a directory listing. (Note: This one needs to update itself as well.)
+                // TODO: dir listing
+                not_found(response_builder)
+            } else {
+                // TODO: Look for the file
+                not_found(response_builder)
+            }
+        }
         _ => method_not_allowed(response_builder),
     }
 }
