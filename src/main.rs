@@ -16,7 +16,6 @@
 
 use clap::crate_version;
 use clap::Parser;
-use fsevent;
 use futures_util::future::join;
 use hyper::header::HeaderValue;
 use hyper::http;
@@ -202,17 +201,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
-fn connect_event_stream(
-    response_builder: http::response::Builder,
-) -> hyper::http::Result<Response<Body>> {
-    let (_sender, body) = hyper::body::Body::channel();
+fn connect_event_stream(response_builder: http::response::Builder) -> http::Result<Response<Body>> {
+    let (_sender, body) = Body::channel();
 
     // TODO: Connect the thing
 
     response_builder.body(body)
 }
 
-async fn request_handler_status(req: Request<Body>) -> hyper::http::Result<Response<Body>> {
+async fn request_handler_status(req: Request<Body>) -> http::Result<Response<Body>> {
     let (method, uri_path) = (req.method(), req.uri().path());
 
     debug!("request_handler_status got request");
@@ -252,9 +249,7 @@ async fn request_handler_project(req: Request<Body>) -> hyper::http::Result<Resp
     }
 }
 
-fn method_not_allowed(
-    response_builder: http::response::Builder,
-) -> hyper::http::Result<Response<Body>> {
+fn method_not_allowed(response_builder: http::response::Builder) -> http::Result<Response<Body>> {
     response_builder
         .status(StatusCode::METHOD_NOT_ALLOWED)
         .header(header::ALLOW, HeaderValue::from_static("GET"))
