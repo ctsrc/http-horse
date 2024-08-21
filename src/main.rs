@@ -19,6 +19,7 @@ use std::{
     sync::OnceLock,
     time::Duration,
 };
+use thiserror::Error;
 use tokio::{fs::File, net::TcpListener};
 use tokio_util::io::ReaderStream;
 use tracing::{debug, error, info};
@@ -33,6 +34,10 @@ static INTERNAL_JAVASCRIPT: &[u8] = include_bytes!("../webui-src/js/main.js");
 
 // XXX: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control#Directives
 static CACHE_CONTROL_VALUE_NO_STORE: &str = "no-store";
+
+// MIME type for Server-Sent Events
+// XXX: https://html.spec.whatwg.org/multipage/server-sent-events.html#server-sent-events
+static TEXT_EVENT_STREAM: &str = "text/event-stream";
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -271,17 +276,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
-/*
-fn connect_event_stream(response_builder: http::response::Builder) -> http::Result<Response<Body>> {
-    let (_sender, body) = Body::channel();
+#[derive(Error, Debug)]
+#[error("FS Event Observer has disconnected")]
+pub struct FSEventObserverDisconnectedError;
 
+fn event_stream() -> BoxBody<Bytes, FSEventObserverDisconnectedError> {
     // TODO: Connect the thing
-
-    response_builder.body(body)
+    let data = vec![
+        Ok(Bytes::from(r#"data: {"hello": "world"}"#)),
+        Ok(Bytes::from("\n\n")),
+        Ok(Bytes::from(r#"data: {"hi": "again"}"#)),
+        Ok(Bytes::from("\n\n")),
+    ];
+    let stream = tokio_stream::iter(data);
+    let stream_body = StreamBody::new(stream.map_ok(Frame::data));
+    stream_body.boxed()
 }
- */
 
-async fn request_handler_status(req: Request<Incoming>) -> http::Result<Response<Full<Bytes>>> {
+async fn request_handler_status(
+    req: Request<Incoming>,
+) -> http::Result<Response<Either<Full<Bytes>, BoxBody<Bytes, FSEventObserverDisconnectedError>>>> {
     let (method, uri_path) = (req.method(), req.uri().path());
 
     debug!("request_handler_status got request");
@@ -294,17 +308,27 @@ async fn request_handler_status(req: Request<Incoming>) -> http::Result<Response
     );
 
     match (method, uri_path) {
-        (&Method::GET, "/") => response_builder.body(INTERNAL_INDEX_PAGE.into()),
-        (&Method::GET, "/style/main.css") => response_builder.body(INTERNAL_STYLESHEET.into()),
-        (&Method::GET, "/js/main.js") => response_builder.body(INTERNAL_JAVASCRIPT.into()),
-        //(&Method::GET, "/event-stream/") => connect_event_stream(response_builder),
+        (&Method::GET, "/") => response_builder.body(Either::Left(INTERNAL_INDEX_PAGE.into())),
+        (&Method::GET, "/style/main.css") => {
+            response_builder.body(Either::Left(INTERNAL_STYLESHEET.into()))
+        }
+        (&Method::GET, "/js/main.js") => {
+            response_builder.body(Either::Left(INTERNAL_JAVASCRIPT.into()))
+        }
+        (&Method::GET, "/event-stream/") => {
+            let response_builder = response_builder.header(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(TEXT_EVENT_STREAM),
+            );
+            response_builder.body(Either::Right(event_stream()))
+        }
         (&Method::GET, _) => {
             let (status, body) = not_found();
-            response_builder.status(status).body(body)
+            response_builder.status(status).body(Either::Left(body))
         }
         _ => {
             let (status, body) = method_not_allowed();
-            response_builder.status(status).body(body)
+            response_builder.status(status).body(Either::Left(body))
         }
     }
 }
@@ -338,7 +362,7 @@ async fn request_handler_project(
                     let reader_stream = ReaderStream::new(file);
                     let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
                     let boxed_body = stream_body.boxed();
-                    return Ok(Response::new(Either::Right(boxed_body)));
+                    return response_builder.body(Either::Right(boxed_body));
                 }
                 // 2. Try file "index.html"
                 if let Ok(file) = File::open(Path::new(project_dir).join("index.html")).await {
@@ -346,7 +370,7 @@ async fn request_handler_project(
                     let reader_stream = ReaderStream::new(file);
                     let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
                     let boxed_body = stream_body.boxed();
-                    return Ok(Response::new(Either::Right(boxed_body)));
+                    return response_builder.body(Either::Right(boxed_body));
                 }
                 // 3. Return a directory listing. (Note: This one needs to update itself as well.)
                 // TODO: dir listing
