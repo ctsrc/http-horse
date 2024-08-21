@@ -4,7 +4,7 @@
 
 HTTP Hot Reload Server for HTML, CSS, JavaScript and WebAssembly web development.
 
-Please note that this software currently supports macOS only. 🍎💻
+Please note that this software currently runs exclusively on macOS. 🍎💻
 
 ## Usage
 
