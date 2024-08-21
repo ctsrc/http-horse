@@ -12,14 +12,14 @@ to happen anytime soon.
 
 ## Usage
 
-Have an out-dir that you want to serve, e.g. `./example/out/`.
+Have an out-dir that you want to serve, e.g. `./example_web_project/out/`.
 
 ### Serve out-dir
 
 Serve the out-dir. In this case:
 
 ```zsh
-RUST_LOG=debug cargo run -- ./example/out/
+RUST_LOG=debug cargo run -- ./example_web_project/out/
 ```
 
 The log output will tell you the address and port for the two servers that `http-horse` runs;
@@ -41,10 +41,10 @@ Open the status page and the project page in your web browser.
 Make a change to one or more of the HTML, CSS, JS, or other web files.
 
 In the case of the example web files included with `http-horse` you find them
-in `example/www/` under the root of the repo.
+in `example_web_project/www/` under the root of the repo.
 
 ```zsh
-$EDITOR ./example/www/index.htm
+$EDITOR ./example_web_project/www/index.htm
 ```
 
 ### Build edited project
@@ -54,7 +54,7 @@ with any kind of build system, and it will hot reload the page in the browser fo
 you when the build system changes any of the relevant files in the out-dir.
 
 ```zsh
-cd example/
+cd example_web_project/
 make
 ```
 
@@ -74,15 +74,15 @@ where the source files are, and what command to run in order to run the build sy
 Example:
 
 ```zsh
-RUST_LOG=debug cargo run -- -c "make" -d example/ -C example/www/ example/out/
+RUST_LOG=debug cargo run -- -c "make" -d example_web_project/ -C example_web_project/www/ example_web_project/out/
 ```
 
 where:
 
 ```text
-RUST_LOG=debug cargo run -- -c "make" -d example/ -C example/www/ example/out/
-                               ^         ^           ^            ^- out-dir to watch for changes
-                               |         |           `- source dir to watch for changes
+RUST_LOG=debug cargo run -- -c "make" -d example_web_project/ -C example_web_project/www/ example_web_project/out/
+                               ^         ^                       ^                        ^- out-dir to watch for changes
+                               |         |                       `- source dir to watch for changes
                                |         `- the working directory to run the build command in
                                `- the build command to run when changes are made in source dir
 ```
