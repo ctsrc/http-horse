@@ -4,6 +4,8 @@
 
 HTTP Hot Reload Server for HTML, CSS, JavaScript and WebAssembly web development.
 
+Please note that this software currently supports macOS only. 🍎💻
+
 ## Usage
 
 Have a out-dir that you want to serve, e.g. `./example/out/`.
