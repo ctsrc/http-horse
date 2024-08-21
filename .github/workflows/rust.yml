@@ -12,7 +12,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
     - uses: actions/checkout@v3
     - name: Build
@@ -20,13 +20,13 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
   clippy_check:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v3
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features
   fmt_check:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v3
       - name: Run cargo fmt check
