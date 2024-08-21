@@ -12,7 +12,7 @@ to happen anytime soon.
 
 ## Usage
 
-Have a out-dir that you want to serve, e.g. `./example/out/`.
+Have an out-dir that you want to serve, e.g. `./example/out/`.
 
 ### Serve out-dir
 
