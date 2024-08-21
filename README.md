@@ -91,7 +91,7 @@ RUST_LOG=debug cargo run -- -c "make" -d example_web_project/ -C example_web_pro
                                                                  |                        |
   -C specifies source dir to watch for changes.  ----------------'                        |
                                                                                           |
-  Positional argument specifies out-dir to watch for changes  ----------------------------'
+  Positional argument specifies out-dir to watch for changes.  ---------------------------'
 ```
 
 So:
