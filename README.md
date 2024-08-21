@@ -81,15 +81,22 @@ where:
 
 ```text
 RUST_LOG=debug cargo run -- -c "make" -d example_web_project/ -C example_web_project/www/ example_web_project/out/
-                               ^         ^                       ^                        ^- out-dir to watch for changes
-                               |         |                       `- source dir to watch for changes
-                               |         `- the working directory to run the build command in
-                               `- the build command to run when changes are made in source dir
+
+                               ^         ^                       ^                        ^
+  -c specifies build command  -'         |                       |                        |
+     to run when changes are             `------------.          |                        |
+     made in source dir.                              |          |                        |
+                                                      |          |                        |
+  -d specifies working dir to run build command in.  -'          |                        |
+                                                                 |                        |
+  -C specifies source dir to watch for changes.  ----------------'                        |
+                                                                                          |
+  Positional argument specifies out-dir to watch for changes  ----------------------------'
 ```
 
 So:
 
 * The `-c` parameter specifies the build command to run when changes are made in source dir.
-* The `-d` parameter specifies the working directory to run the build command in
-* The `-C` parameter specifies source dir to watch for changes
-* The positional argument after all flags and options have been provided specifies out-dir to watch for changes
+* The `-d` parameter specifies the working directory to run the build command in.
+* The `-C` parameter specifies source dir to watch for changes.
+* The positional argument after all flags and options have been provided specifies out-dir to watch for changes.
