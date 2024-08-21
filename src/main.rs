@@ -1,18 +1,26 @@
-use clap::crate_version;
-use clap::Parser;
-use futures_util::future::join;
-use hyper::header::HeaderValue;
-use hyper::http;
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{header, Server};
-use hyper::{Body, Method, Request, Response, StatusCode};
-use std::fs::metadata;
-use std::net::{IpAddr, SocketAddr, TcpListener};
-use std::path::Path;
-use std::sync::OnceLock;
-use std::time::Duration;
-use tokio::fs::File;
-use tokio_util::codec::{BytesCodec, FramedRead};
+use bytes::Bytes;
+use clap::{crate_version, Parser};
+use futures_util::TryStreamExt;
+use http_body_util::{combinators::BoxBody, BodyExt, Either, Full, StreamBody};
+use hyper::{
+    body::{Frame, Incoming},
+    header,
+    header::HeaderValue,
+    http,
+    service::service_fn,
+    Method, Request, Response, StatusCode,
+};
+use hyper_util::rt::TokioIo;
+use std::{
+    fs::metadata,
+    net::{IpAddr, SocketAddr},
+    path::Path,
+    pin::pin,
+    sync::OnceLock,
+    time::Duration,
+};
+use tokio::{fs::File, net::TcpListener};
+use tokio_util::io::ReaderStream;
 use tracing::{debug, error, info};
 
 static NOT_FOUND_BODY_TEXT: &[u8] = b"HTTP 404. File not found.";
@@ -65,26 +73,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     PROJECT_DIR.set(project_dir.clone())?;
 
     let status_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
-    let status_tcp = TcpListener::bind(status_addr)?;
+    let status_tcp = TcpListener::bind(status_addr).await?;
     let status_addr = status_tcp.local_addr()?;
     info!("Status pages will be served on http://{status_addr}");
 
     let project_addr = SocketAddr::new(args.status_listen_addr, args.status_listen_port);
-    let project_tcp = TcpListener::bind(project_addr)?;
+    let project_tcp = TcpListener::bind(project_addr).await?;
     let project_addr = project_tcp.local_addr()?;
     info!("Project pages will be served on http://{project_addr}");
-
-    /*
-     * Create server builders for status and project.
-     * Enable TCP_NODELAY for accepted connections.
-     *
-     * XXX: For details about TCP_NODELAY, see
-     *      https://github.com/hyperium/hyper/issues/1997
-     *      https://en.wikipedia.org/wiki/Nagle%27s_algorithm
-     *      https://www.extrahop.com/company/blog/2016/tcp-nodelay-nagle-quickack-best-practices/
-     */
-    let status_server_builder = Server::from_tcp(status_tcp)?.tcp_nodelay(true);
-    let project_server_builder = Server::from_tcp(project_tcp)?.tcp_nodelay(true);
 
     /*
      * We monitor FS events in the project dir using the
@@ -100,7 +96,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
      *      monitor the whole file system, and do our best to correlate all moves that affect us.
      *      But really, that's a lot of work for little actual benefit.
      *
-     *      So what we are gonna do is, anytime a file or directory is moved into, within, or out
+     *      So what we are going to do is, anytime a file or directory is moved into, within, or out
      *      of the project directory, we create a temporary file, recursively rescan the project
      *      directory and "fast-forward" to the point in the stream where we see the creation of
      *      our temporary file. We do that same temporary file thing for the initial scan as well.
@@ -119,21 +115,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
      *      So all in all this is actually a good solution we have here, I think.
      */
 
-    let (fs_event_tx, fs_event_rx) = std::sync::mpsc::channel();
+    let (project_out_fs_event_tx, project_out_fs_event_rx) = std::sync::mpsc::channel();
 
     let pdir = project_dir.clone();
-    let fs_event_observer_task = tokio::task::spawn_blocking(move || {
-        let fs_observer = fsevent::FsEvent::new(vec![pdir.clone()]);
-        fs_observer.observe(fs_event_tx);
+    let project_out_fs_event_observer_handle = std::thread::spawn(move || {
+        let project_out_fs_observer = fsevent::FsEvent::new(vec![pdir.clone()]);
+        project_out_fs_observer.observe(project_out_fs_event_tx);
     });
 
-    let fs_event_transformer_task = tokio::task::spawn_blocking(move || {
+    let project_out_fs_event_transformer_handle = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(15));
         // TODO: Create initial temp file in project dir
         // TODO: Start a timer so we can check how long has passed since we created initial temp file.
         // TODO: Initial scan of project dir
         'skip_up_to_temp_file: loop {
-            match fs_event_rx.recv() {
+            match project_out_fs_event_rx.recv() {
                 Ok(fs_ev) => {
                     debug!("fs event: {:?}", fs_ev);
                     if false
@@ -150,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             };
         }
         loop {
-            match fs_event_rx.recv() {
+            match project_out_fs_event_rx.recv() {
                 Ok(fs_ev) => {
                     if false
                     // TODO: If event type is move
@@ -159,7 +155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         // TODO: Start a timer so we can check how long has passed since we created temp file.
                         // TODO: Rescan of project dir
                         'skip_up_to_temp_file: loop {
-                            match fs_event_rx.recv() {
+                            match project_out_fs_event_rx.recv() {
                                 Ok(fs_ev) => {
                                     debug!("fs event: {:?}", fs_ev);
                                     if false
@@ -186,21 +182,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
 
-    /*
-     * Serving of status pages, showing status and history.
-     */
-    let status_server = status_server_builder.serve(make_service_fn(|_| async {
-        Ok::<_, hyper::Error>(service_fn(request_handler_status))
-    }));
-
-    /*
-     * Serving of files for the project that the user is working on.
-     */
-    let project_server = project_server_builder.serve(make_service_fn(|_| async {
-        Ok::<_, hyper::Error>(service_fn(request_handler_project))
-    }));
-
-    let fs_event_tasks = join(fs_event_observer_task, fs_event_transformer_task);
+    let server = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
+    let graceful = hyper_util::server::graceful::GracefulShutdown::new();
+    let mut ctrl_c = pin!(tokio::signal::ctrl_c());
 
     info!("Starting status and project servers.");
     info!("Access your project through the http-horse status user interface.");
@@ -209,17 +193,85 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         status_addr
     );
 
-    let servers = join(status_server, project_server);
-    let ret = join(fs_event_tasks, servers).await;
+    // XXX: https://github.com/hyperium/hyper-util/blob/df55abac42d0cc1e1577f771d8a1fc91f4bcd0dd/examples/server_graceful.rs
+    loop {
+        tokio::select! {
+            /*
+             * TODO: Enable TCP_NODELAY for accepted connections.
+             *
+             * XXX: For details about TCP_NODELAY, see
+             *      https://github.com/hyperium/hyper/issues/1997
+             *      https://en.wikipedia.org/wiki/Nagle%27s_algorithm
+             *      https://www.extrahop.com/company/blog/2016/tcp-nodelay-nagle-quickack-best-practices/
+             */
 
-    (ret.0).0?;
-    (ret.0).1?;
-    (ret.1).0?;
-    (ret.1).1?;
+            /*
+             * Serving of files for the project that the user is working on.
+             */
+            project_conn = project_tcp.accept() => {
+                let (stream, peer_addr) = match project_conn {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        error!("Accept error: {}", e);
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
+                debug!("Incoming connection accepted: {}", peer_addr);
+                let stream = TokioIo::new(Box::pin(stream));
+                let conn = server.serve_connection_with_upgrades(stream, service_fn(request_handler_project));
+                let conn = graceful.watch(conn.into_owned());
+                tokio::spawn(async move {
+                    if let Err(err) = conn.await {
+                        error!("Connection error: {}", err);
+                    }
+                    debug!("Connection dropped: {}", peer_addr);
+                });
+            },
+
+            /*
+             * Serving of status pages, showing status and history.
+             */
+            status_conn = status_tcp.accept() => {
+                let (stream, peer_addr) = match status_conn {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        error!("Accept error: {}", e);
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
+                debug!("Incoming connection accepted: {}", peer_addr);
+                let stream = TokioIo::new(Box::pin(stream));
+                let conn = server.serve_connection_with_upgrades(stream, service_fn(request_handler_status));
+                let conn = graceful.watch(conn.into_owned());
+                tokio::spawn(async move {
+                    if let Err(err) = conn.await {
+                        error!("Connection error: {}", err);
+                    }
+                    debug!("Connection dropped: {}", peer_addr);
+                });
+            },
+
+            _ = ctrl_c.as_mut() => {
+                drop(project_tcp);
+                drop(status_tcp);
+                info!("Ctrl-C received, starting shutdown");
+                break;
+            }
+        }
+    }
+
+    info!("Shutting down FS event observer thread for project out dir.");
+    drop(project_out_fs_event_observer_handle);
+
+    info!("Shutting down FS event transformer thread for project out dir.");
+    drop(project_out_fs_event_transformer_handle);
 
     Ok(())
 }
 
+/*
 fn connect_event_stream(response_builder: http::response::Builder) -> http::Result<Response<Body>> {
     let (_sender, body) = Body::channel();
 
@@ -227,8 +279,9 @@ fn connect_event_stream(response_builder: http::response::Builder) -> http::Resu
 
     response_builder.body(body)
 }
+ */
 
-async fn request_handler_status(req: Request<Body>) -> http::Result<Response<Body>> {
+async fn request_handler_status(req: Request<Incoming>) -> http::Result<Response<Full<Bytes>>> {
     let (method, uri_path) = (req.method(), req.uri().path());
 
     debug!("request_handler_status got request");
@@ -244,13 +297,21 @@ async fn request_handler_status(req: Request<Body>) -> http::Result<Response<Bod
         (&Method::GET, "/") => response_builder.body(INTERNAL_INDEX_PAGE.into()),
         (&Method::GET, "/style/main.css") => response_builder.body(INTERNAL_STYLESHEET.into()),
         (&Method::GET, "/js/main.js") => response_builder.body(INTERNAL_JAVASCRIPT.into()),
-        (&Method::GET, "/event-stream/") => connect_event_stream(response_builder),
-        (&Method::GET, _) => not_found(response_builder),
-        _ => method_not_allowed(response_builder),
+        //(&Method::GET, "/event-stream/") => connect_event_stream(response_builder),
+        (&Method::GET, _) => {
+            let (status, body) = not_found();
+            response_builder.status(status).body(body)
+        }
+        _ => {
+            let (status, body) = method_not_allowed();
+            response_builder.status(status).body(body)
+        }
     }
 }
 
-async fn request_handler_project(req: Request<Body>) -> http::Result<Response<Body>> {
+async fn request_handler_project(
+    req: Request<Incoming>,
+) -> http::Result<Response<Either<Full<Bytes>, BoxBody<Bytes, std::io::Error>>>> {
     let (method, uri_path) = (req.method(), req.uri().path());
 
     debug!("request_handler_project got request");
@@ -263,7 +324,9 @@ async fn request_handler_project(req: Request<Body>) -> http::Result<Response<Bo
     );
 
     let Some(project_dir) = PROJECT_DIR.get() else {
-        return server_error(response_builder);
+        let (status, body) = server_error();
+        let resp = response_builder.status(status).body(Either::Left(body));
+        return resp;
     };
 
     match (method, uri_path) {
@@ -271,43 +334,51 @@ async fn request_handler_project(req: Request<Body>) -> http::Result<Response<Bo
             if uri_path == "/" {
                 // 1. Try file "index.htm"
                 if let Ok(file) = File::open(Path::new(project_dir).join("index.htm")).await {
-                    let stream = FramedRead::new(file, BytesCodec::new());
-                    let body = Body::wrap_stream(stream);
-                    return Ok(Response::new(body));
+                    // Based on <https://github.com/hyperium/hyper/blob/4c84e8c1c26a1464221de96b9f39816ce7251a5f/examples/send_file.rs#L81C1-L82C42>
+                    let reader_stream = ReaderStream::new(file);
+                    let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
+                    let boxed_body = stream_body.boxed();
+                    return Ok(Response::new(Either::Right(boxed_body)));
                 }
                 // 2. Try file "index.html"
                 if let Ok(file) = File::open(Path::new(project_dir).join("index.html")).await {
-                    let stream = FramedRead::new(file, BytesCodec::new());
-                    let body = Body::wrap_stream(stream);
-                    return Ok(Response::new(body));
+                    // Based on <https://github.com/hyperium/hyper/blob/4c84e8c1c26a1464221de96b9f39816ce7251a5f/examples/send_file.rs#L81C1-L82C42>
+                    let reader_stream = ReaderStream::new(file);
+                    let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
+                    let boxed_body = stream_body.boxed();
+                    return Ok(Response::new(Either::Right(boxed_body)));
                 }
                 // 3. Return a directory listing. (Note: This one needs to update itself as well.)
                 // TODO: dir listing
-                not_found(response_builder)
+                let (status, body) = not_found();
+                response_builder.status(status).body(Either::Left(body))
             } else {
                 // TODO: Look for the file
-                not_found(response_builder)
+                let (status, body) = not_found();
+                response_builder.status(status).body(Either::Left(body))
             }
         }
-        _ => method_not_allowed(response_builder),
+        _ => {
+            let (status, body) = method_not_allowed();
+            response_builder.status(status).body(Either::Left(body))
+        }
     }
 }
 
-fn server_error(response_builder: http::response::Builder) -> http::Result<Response<Body>> {
-    response_builder
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(INTERNAL_SERVER_ERROR_BODY_TEXT.into())
+fn server_error() -> (StatusCode, Full<Bytes>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        INTERNAL_SERVER_ERROR_BODY_TEXT.into(),
+    )
 }
 
-fn method_not_allowed(response_builder: http::response::Builder) -> http::Result<Response<Body>> {
-    response_builder
-        .status(StatusCode::METHOD_NOT_ALLOWED)
-        .header(header::ALLOW, HeaderValue::from_static("GET"))
-        .body(METHOD_NOT_ALLOWED_BODY_TEXT.into())
+fn method_not_allowed() -> (StatusCode, Full<Bytes>) {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        METHOD_NOT_ALLOWED_BODY_TEXT.into(),
+    )
 }
 
-fn not_found(response_builder: http::response::Builder) -> hyper::http::Result<Response<Body>> {
-    response_builder
-        .status(StatusCode::NOT_FOUND)
-        .body(NOT_FOUND_BODY_TEXT.into())
+fn not_found() -> (StatusCode, Full<Bytes>) {
+    (StatusCode::NOT_FOUND, NOT_FOUND_BODY_TEXT.into())
 }

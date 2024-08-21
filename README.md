@@ -44,7 +44,7 @@ $EDITOR ./example/www/index.htm
 ### Build edited project
 
 In the example project we use a Makefile. However, you can use `http-horse`
-with any kind of build system and it will hot reload the page in the browser for
+with any kind of build system, and it will hot reload the page in the browser for
 you when the build system changes any of the relevant files in the out-dir.
 
 ```zsh
