@@ -1,3 +1,4 @@
+use async_stream::stream;
 use bytes::Bytes;
 use clap::{crate_version, Parser};
 use futures_util::TryStreamExt;
@@ -282,15 +283,17 @@ pub struct FSEventObserverDisconnectedError;
 
 fn event_stream() -> BoxBody<Bytes, FSEventObserverDisconnectedError> {
     // TODO: Connect the thing
-    let data = vec![
-        Ok(Bytes::from(r#"data: {"hello": "world"}"#)),
-        Ok(Bytes::from("\n\n")),
-        Ok(Bytes::from(r#"data: {"hi": "again"}"#)),
-        Ok(Bytes::from("\n\n")),
-    ];
-    let stream = tokio_stream::iter(data);
+    let stream = stream! {
+        let mut i = 0;
+        loop {
+            // Sleep 250ms between each iteration so we don't overwhelm the web page with events.
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            yield Ok(Bytes::from(format!("data: {{\"elem\": {i}}}\n\n")));
+            i += 1;
+        }
+    };
     let stream_body = StreamBody::new(stream.map_ok(Frame::data));
-    stream_body.boxed()
+    BodyExt::boxed(stream_body)
 }
 
 async fn request_handler_status(
@@ -361,7 +364,7 @@ async fn request_handler_project(
                     // Based on <https://github.com/hyperium/hyper/blob/4c84e8c1c26a1464221de96b9f39816ce7251a5f/examples/send_file.rs#L81C1-L82C42>
                     let reader_stream = ReaderStream::new(file);
                     let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
-                    let boxed_body = stream_body.boxed();
+                    let boxed_body = BodyExt::boxed(stream_body);
                     return response_builder.body(Either::Right(boxed_body));
                 }
                 // 2. Try file "index.html"
@@ -369,7 +372,7 @@ async fn request_handler_project(
                     // Based on <https://github.com/hyperium/hyper/blob/4c84e8c1c26a1464221de96b9f39816ce7251a5f/examples/send_file.rs#L81C1-L82C42>
                     let reader_stream = ReaderStream::new(file);
                     let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
-                    let boxed_body = stream_body.boxed();
+                    let boxed_body = BodyExt::boxed(stream_body);
                     return response_builder.body(Either::Right(boxed_body));
                 }
                 // 3. Return a directory listing. (Note: This one needs to update itself as well.)
