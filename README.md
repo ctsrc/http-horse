@@ -6,6 +6,10 @@ HTTP Hot Reload Server for HTML, CSS, JavaScript/TypeScript and WebAssembly web 
 
 Please note that this software currently runs exclusively on macOS. 🍎💻
 
+There's [an open issue (#1)](https://github.com/ctsrc/http-horse/issues/1) for supporting
+other operating systems including Linux and FreeBSD but work on that is not expected
+to happen anytime soon.
+
 ## Usage
 
 Have a out-dir that you want to serve, e.g. `./example/out/`.
