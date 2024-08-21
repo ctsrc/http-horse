@@ -1,4 +1,4 @@
-# http-horse
+# http-horse 🐴
 
 [![Crates.io](https://img.shields.io/crates/v/http-horse.svg)](https://crates.io/crates/http-horse)
 
