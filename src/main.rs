@@ -464,13 +464,12 @@ async fn request_handler_status(
                 HeaderValue::from_static(TEXT_JAVASCRIPT),
             )
             .body(Either::Left(INTERNAL_JAVASCRIPT.into())),
-        (&Method::GET, "event-stream/") => {
-            let response_builder = response_builder.header(
+        (&Method::GET, "event-stream/") => response_builder
+            .header(
                 header::CONTENT_TYPE,
                 HeaderValue::from_static(TEXT_EVENT_STREAM),
-            );
-            response_builder.body(Either::Right(event_stream()))
-        }
+            )
+            .body(Either::Right(event_stream())),
         (&Method::GET, _) => {
             warn!(
                 uri_path,
