@@ -41,6 +41,8 @@ static CACHE_CONTROL_VALUE_NO_STORE: &str = "no-store";
 // XXX: https://html.spec.whatwg.org/multipage/server-sent-events.html#server-sent-events
 static TEXT_EVENT_STREAM: &str = "text/event-stream";
 
+static IMAGE_X_ICON: &str = "image/x-icon";
+
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Cli {
@@ -444,6 +446,9 @@ async fn request_handler_status(
 
     match (method, uri_path) {
         (&Method::GET, "") => response_builder.body(Either::Left(INTERNAL_INDEX_PAGE.into())),
+        (&Method::GET, "favicon.ico") => response_builder
+            .header(header::CONTENT_TYPE, HeaderValue::from_static(IMAGE_X_ICON))
+            .body(Either::Left("".into())),
         (&Method::GET, "style/main.css") => {
             response_builder.body(Either::Left(INTERNAL_STYLESHEET.into()))
         }
