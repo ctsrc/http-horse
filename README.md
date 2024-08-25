@@ -23,7 +23,7 @@ RUST_LOG=debug cargo run -- ./example_web_project/out/
 ```
 
 The log output will tell you the address and port for the two servers that `http-horse` runs;
-one server for the status page, and one server for the project page.
+one server for the status page, and one server for your project.
 
 For example:
 
@@ -34,7 +34,7 @@ For example:
 […]
 ```
 
-Open the status page and the project page in your web browser.
+Open the status page and the project main page in your web browser.
 
 Alternatively, provide the `--open` option (`-o` for short) to have http-horse
 attempt to open the status and project pages in your system default web browser:
