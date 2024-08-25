@@ -7,7 +7,7 @@ use hyper::{
     body::{Frame, Incoming},
     header,
     header::HeaderValue,
-    http::{self, Result as HttpResult},
+    http::Result as HttpResult,
     service::service_fn,
     Method, Request, Response, StatusCode,
 };
