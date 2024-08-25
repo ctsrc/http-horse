@@ -454,6 +454,7 @@ async fn request_handler_status(
             .body(Either::Left(INTERNAL_INDEX_PAGE.into())),
         (&Method::GET, "favicon.ico") => response_builder
             .header(header::CONTENT_TYPE, HeaderValue::from_static(IMAGE_X_ICON))
+            .status(StatusCode::NO_CONTENT)
             .body(Either::Left("".into())),
         (&Method::GET, "style/main.css") => response_builder
             .header(header::CONTENT_TYPE, HeaderValue::from_static(TEXT_CSS))
