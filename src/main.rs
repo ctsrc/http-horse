@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Context};
 use async_stream::stream;
 use bytes::Bytes;
 use clap::{crate_version, Parser};
@@ -7,15 +8,15 @@ use hyper::{
     body::{Frame, Incoming},
     header,
     header::HeaderValue,
-    http::Result as HttpResult,
+    http::{response::Builder as ResponseBuilder, Result as HttpResult},
     service::service_fn,
     Method, Request, Response, StatusCode,
 };
 use hyper_util::rt::TokioIo;
 use std::{
-    fs::metadata,
+    io::ErrorKind,
     net::{IpAddr, SocketAddr},
-    path::Path,
+    path::{Path, PathBuf},
     pin::pin,
     sync::OnceLock,
     time::Duration,
@@ -23,7 +24,7 @@ use std::{
 use thiserror::Error;
 use tokio::{fs::File, net::TcpListener};
 use tokio_util::io::ReaderStream;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 static NOT_FOUND_BODY_TEXT: &[u8] = b"HTTP 404. File not found.";
 static METHOD_NOT_ALLOWED_BODY_TEXT: &[u8] = b"HTTP 405. Method not allowed.";
@@ -72,10 +73,10 @@ struct Cli {
     dir: String,
 }
 
-static PROJECT_DIR: OnceLock<String> = OnceLock::new();
+static PROJECT_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> anyhow::Result<()> {
     // install global collector configured based on RUST_LOG env var.
     tracing_subscriber::fmt::init();
 
@@ -83,26 +84,88 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let args = Cli::parse();
 
-    let project_dir = args.dir.clone();
-    let project_dir_md = metadata(project_dir.clone())?;
-    if !project_dir_md.is_dir() {
-        return Err(format!("File is not a directory: {project_dir}").into());
-    }
-    PROJECT_DIR.set(project_dir.clone())?;
+    let project_dir = PathBuf::from(args.dir);
+    let project_dir = project_dir
+        .canonicalize()
+        .inspect_err(
+            |e| error!(err = ?e, ?project_dir, "Fatal: Failed to canonicalize project dir path."),
+        )
+        .with_context(|| format!("Failed to canonicalize project dir path: {project_dir:?}"))?;
 
-    let status_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
-    let status_tcp = TcpListener::bind(status_addr).await?;
-    let status_addr = status_tcp.local_addr()?;
+    if !project_dir.is_dir() {
+        error!(
+            ?project_dir,
+            "Fatal: File is not a directory: Project dir path."
+        );
+        return Err(anyhow!(
+            "File is not a directory: Project dir path: {project_dir:?}"
+        ));
+    }
+
+    PROJECT_DIR
+        .set(project_dir.clone())
+        .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
+        .map_err(|_| anyhow!("Failed to set value of OnceLock."))?;
+
+    // FsEvent takes strings as arguments. We always want to use the canonical path,
+    // and because of that we have to convert back to String from PathBuf.
+    let pdir = project_dir
+        .into_os_string()
+        .into_string()
+        .inspect_err(|e| error!(os_string = ?e, "Fatal: Failed to convert PathBuf to String."))
+        .map_err(|_| anyhow!("Failed to convert PathBuf to String."))?;
+
+    let status_addr = SocketAddr::new(args.status_listen_addr, args.status_listen_port);
+    let status_tcp = TcpListener::bind(status_addr)
+        .await
+        .inspect_err(|e| {
+            error!(
+                err = ?e,
+                ?status_addr,
+                "Fatal: Failed to bind TCP listener for status server."
+            )
+        })
+        .with_context(|| "Failed to bind TCP listener for status server.")?;
+    let status_addr = status_tcp
+        .local_addr()
+        .inspect_err(|e| {
+            error!(
+                err = ?e,
+                ?status_addr,
+                ?status_tcp,
+                "Fatal: Failed to get local address that status server is bound to."
+            )
+        })
+        .with_context(|| "Failed to get local address that status server is bound to.")?;
     let status_url_s = format!("http://{status_addr}");
     let status_url = &status_url_s;
-    info!("Status pages will be served on {status_url}");
+    info!(status_url, "Status pages will be served on {status_url}");
 
-    let project_addr = SocketAddr::new(args.status_listen_addr, args.status_listen_port);
-    let project_tcp = TcpListener::bind(project_addr).await?;
-    let project_addr = project_tcp.local_addr()?;
+    let project_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
+    let project_tcp = TcpListener::bind(project_addr)
+        .await
+        .inspect_err(|e| {
+            error!(
+                err = ?e,
+                ?project_addr,
+                "Fatal: Failed to bind TCP listener for project server."
+            )
+        })
+        .with_context(|| "Failed to bind TCP listener for project server.")?;
+    let project_addr = project_tcp
+        .local_addr()
+        .inspect_err(|e| {
+            error!(
+                err = ?e,
+                ?project_addr,
+                ?project_tcp,
+                "Fatal: Failed to get local address that project server is bound to."
+            )
+        })
+        .with_context(|| "Failed to get local address that project server is bound to.")?;
     let project_url_s = format!("http://{project_addr}");
     let project_url = &project_url_s;
-    info!("Project pages will be served on {project_url}");
+    info!(project_url, "Project pages will be served on {project_url}");
 
     /*
      * We monitor FS events in the project dir using the
@@ -139,9 +202,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let (project_out_fs_event_tx, project_out_fs_event_rx) = std::sync::mpsc::channel();
 
-    let pdir = project_dir.clone();
     let project_out_fs_event_observer_handle = std::thread::spawn(move || {
-        let project_out_fs_observer = fsevent::FsEvent::new(vec![pdir.clone()]);
+        let project_out_fs_observer = fsevent::FsEvent::new(vec![pdir]);
         project_out_fs_observer.observe(project_out_fs_event_tx);
     });
 
@@ -153,7 +215,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         'skip_up_to_temp_file: loop {
             match project_out_fs_event_rx.recv() {
                 Ok(fs_ev) => {
-                    debug!("fs event: {:?}", fs_ev);
+                    debug!(?fs_ev, "fs event");
                     if false
                     // TODO: If this event corresponds to the creation of the initial temp file
                     {
@@ -164,7 +226,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         //       and rescan project dir. Skip all events up to new temp file.
                     }
                 }
-                Err(_e) => error!("fs event recv error!"),
+                Err(e) => error!(err = ?e, "fs event recv error!"),
             };
         }
         loop {
@@ -179,7 +241,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         'skip_up_to_temp_file: loop {
                             match project_out_fs_event_rx.recv() {
                                 Ok(fs_ev) => {
-                                    debug!("fs event: {:?}", fs_ev);
+                                    debug!(?fs_ev, "fs event");
                                     if false
                                     // TODO: If this event corresponds to the creation of the temp file
                                     {
@@ -192,14 +254,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                         //       up to an upper limit of 10 minutes.
                                     }
                                 }
-                                Err(_e) => error!("fs event recv error!"),
+                                Err(e) => error!(err = ?e, "fs event recv error!"),
                             };
                         }
                     } else {
-                        info!("fs event: {:?}", fs_ev)
+                        info!(?fs_ev, "fs event")
                     }
                 }
-                Err(_e) => error!("fs event recv error!"),
+                Err(e) => error!(err = ?e, "fs event recv error!"),
             };
         }
     });
@@ -212,7 +274,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Skip printing hints if we are going to attempt to open the web browser for the user.
     if !args.open {
         info!("Access your project through the http-horse status user interface.");
-        info!("http-horse status user interface is accessible at {status_url}");
+        info!(
+            status_url,
+            "http-horse status user interface is accessible at {status_url}"
+        );
     }
 
     // Attempt to open web browser for the user if they supplied the flag for doing so.
@@ -251,20 +316,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let (stream, peer_addr) = match project_conn {
                     Ok(conn) => conn,
                     Err(e) => {
-                        error!("Accept error: {}", e);
+                        error!(err = ?e, "Accept error");
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         continue;
                     }
                 };
-                debug!("Incoming connection accepted: {}", peer_addr);
+                debug!(?peer_addr, "Incoming connection accepted");
                 let stream = TokioIo::new(Box::pin(stream));
                 let conn = server.serve_connection_with_upgrades(stream, service_fn(request_handler_project));
                 let conn = graceful.watch(conn.into_owned());
                 tokio::spawn(async move {
-                    if let Err(err) = conn.await {
-                        error!("Connection error: {}", err);
+                    if let Err(e) = conn.await {
+                        // We log this error at debug level because it is usually not interesting.
+                        // Known, uninteresting things (from error level logs perspective)
+                        // that trigger this error:
+                        // - In the case where user closes browser tab, we get a connection error
+                        //   if a message was still in progress of being sent.
+                        // - If the user agent is sends just `GET /` without specifying HTTP version,
+                        //   as they used to do for what we now sometimes refer to as HTTP/0.9,
+                        //   we get an "invalid URI" error.
+                        //   Conversely:
+                        //   * A client that sends `GET / HTTP/1.1` gets a HTTP/1.1 response
+                        //     as one would expect.
+                        //   * A client that sends `GET / HTTP/1.0` gets a HTTP/1.0 response
+                        //     as one might expect.
+                        // TODO: Any cases that would warrant logging this at level error?
+                        debug!(err = e, "Connection error");
                     }
-                    debug!("Connection dropped: {}", peer_addr);
+                    debug!(?peer_addr, "Connection dropped");
                 });
             },
 
@@ -275,20 +354,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let (stream, peer_addr) = match status_conn {
                     Ok(conn) => conn,
                     Err(e) => {
-                        error!("Accept error: {}", e);
+                        error!(err = ?e, "Accept error");
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         continue;
                     }
                 };
-                debug!("Incoming connection accepted: {}", peer_addr);
+                debug!(?peer_addr, "Incoming connection accepted");
                 let stream = TokioIo::new(Box::pin(stream));
                 let conn = server.serve_connection_with_upgrades(stream, service_fn(request_handler_status));
                 let conn = graceful.watch(conn.into_owned());
                 tokio::spawn(async move {
-                    if let Err(err) = conn.await {
-                        error!("Connection error: {}", err);
+                    if let Err(e) = conn.await {
+                        // We log this error at debug level because it is usually not interesting.
+                        // Known, uninteresting things (from error level logs perspective)
+                        // that trigger this error:
+                        // - In the case where user closes browser tab, we get a connection error
+                        //   if a message was still in progress of being sent.
+                        // - If the user agent is sends just `GET /` without specifying HTTP version,
+                        //   as they used to do for what we now sometimes refer to as HTTP/0.9,
+                        //   we get an "invalid URI" error.
+                        //   Conversely:
+                        //   * A client that sends `GET / HTTP/1.1` gets a HTTP/1.1 response
+                        //     as one would expect.
+                        //   * A client that sends `GET / HTTP/1.0` gets a HTTP/1.0 response
+                        //     as one might expect.
+                        // TODO: Any cases that would warrant logging this at level error?
+                        debug!(err = e, "Connection error");
                     }
-                    debug!("Connection dropped: {}", peer_addr);
+                    debug!(?peer_addr, "Connection dropped");
                 });
             },
 
@@ -333,10 +426,16 @@ async fn request_handler_status(
     req: Request<Incoming>,
 ) -> HttpResult<Response<Either<Full<Bytes>, BoxBody<Bytes, FSEventObserverDisconnectedError>>>> {
     let (method, uri_path) = (req.method(), req.uri().path());
-
-    debug!("request_handler_status got request");
-    debug!("  Method:   {}", method);
-    debug!("  URI path: {}", uri_path);
+    let uri_path_trimmed = uri_path.trim_start_matches('/');
+    debug!(
+        ?method,
+        uri_path, uri_path_trimmed, "Status server is handling a request"
+    );
+    // XXX: The path join operation completely replaces the path we are joining onto
+    //      if the component we are joining has a leading slash. Likewise, pushing onto
+    //      a path buf behaves in a similar fashion in terms of leading slashes.
+    //      It is therefore essential that we only use the path that has leading slashes stripped.
+    let uri_path = uri_path_trimmed;
 
     let response_builder = Response::builder().header(
         header::CACHE_CONTROL,
@@ -344,14 +443,14 @@ async fn request_handler_status(
     );
 
     match (method, uri_path) {
-        (&Method::GET, "/") => response_builder.body(Either::Left(INTERNAL_INDEX_PAGE.into())),
-        (&Method::GET, "/style/main.css") => {
+        (&Method::GET, "") => response_builder.body(Either::Left(INTERNAL_INDEX_PAGE.into())),
+        (&Method::GET, "style/main.css") => {
             response_builder.body(Either::Left(INTERNAL_STYLESHEET.into()))
         }
-        (&Method::GET, "/js/main.js") => {
+        (&Method::GET, "js/main.js") => {
             response_builder.body(Either::Left(INTERNAL_JAVASCRIPT.into()))
         }
-        (&Method::GET, "/event-stream/") => {
+        (&Method::GET, "event-stream/") => {
             let response_builder = response_builder.header(
                 header::CONTENT_TYPE,
                 HeaderValue::from_static(TEXT_EVENT_STREAM),
@@ -359,10 +458,18 @@ async fn request_handler_status(
             response_builder.body(Either::Right(event_stream()))
         }
         (&Method::GET, _) => {
+            warn!(
+                uri_path,
+                "Status server got request with unexpected uri path. Returning 404."
+            );
             let (status, body) = not_found();
             response_builder.status(status).body(Either::Left(body))
         }
         _ => {
+            warn!(
+                uri_path,
+                "Status server got request with unexpected request method. Returning 405."
+            );
             let (status, body) = method_not_allowed();
             response_builder.status(status).body(Either::Left(body))
         }
@@ -373,10 +480,16 @@ async fn request_handler_project(
     req: Request<Incoming>,
 ) -> HttpResult<Response<Either<Full<Bytes>, BoxBody<Bytes, std::io::Error>>>> {
     let (method, uri_path) = (req.method(), req.uri().path());
-
-    debug!("request_handler_project got request");
-    debug!("  Method:   {}", method);
-    debug!("  URI path: {}", uri_path);
+    let uri_path_trimmed = uri_path.trim_start_matches('/');
+    debug!(
+        ?method,
+        uri_path, uri_path_trimmed, "Project server is handling a request"
+    );
+    // XXX: The path join operation completely replaces the path we are joining onto
+    //      if the component we are joining has a leading slash. Likewise, pushing onto
+    //      a path buf behaves in a similar fashion in terms of leading slashes.
+    //      It is therefore essential that we only use the path that has leading slashes stripped.
+    let uri_path = uri_path_trimmed;
 
     let response_builder = Response::builder().header(
         header::CACHE_CONTROL,
@@ -391,38 +504,127 @@ async fn request_handler_project(
 
     match (method, uri_path) {
         (&Method::GET, _) => {
-            if uri_path == "/" {
-                // 1. Try file "index.htm"
-                if let Ok(file) = File::open(Path::new(project_dir).join("index.htm")).await {
-                    // Based on <https://github.com/hyperium/hyper/blob/4c84e8c1c26a1464221de96b9f39816ce7251a5f/examples/send_file.rs#L81C1-L82C42>
-                    let reader_stream = ReaderStream::new(file);
-                    let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
-                    let boxed_body = BodyExt::boxed(stream_body);
-                    return response_builder.body(Either::Right(boxed_body));
-                }
-                // 2. Try file "index.html"
-                if let Ok(file) = File::open(Path::new(project_dir).join("index.html")).await {
-                    // Based on <https://github.com/hyperium/hyper/blob/4c84e8c1c26a1464221de96b9f39816ce7251a5f/examples/send_file.rs#L81C1-L82C42>
-                    let reader_stream = ReaderStream::new(file);
-                    let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
-                    let boxed_body = BodyExt::boxed(stream_body);
-                    return response_builder.body(Either::Right(boxed_body));
-                }
-                // 3. Return a directory listing. (Note: This one needs to update itself as well.)
-                // TODO: dir listing
-                let (status, body) = not_found();
-                response_builder.status(status).body(Either::Left(body))
+            if uri_path == "" {
+                handle_dir_request(project_dir, response_builder).await
             } else {
-                // TODO: Look for the file
-                let (status, body) = not_found();
-                response_builder.status(status).body(Either::Left(body))
+                let uri_path = uri_path.trim_start_matches('/');
+                let req_path = Path::join(project_dir.as_ref(), uri_path);
+                debug!(
+                    ?project_dir,
+                    uri_path,
+                    ?req_path,
+                    "Constructed req_path from project_dir and uri_path."
+                );
+                // Early check to ensure that the constructed req path still begins with project dir path.
+                if !(req_path.starts_with(project_dir)) {
+                    error!(
+                        ?req_path,
+                        ?project_dir,
+                        "Constructed req_path does not begin with project_dir path."
+                    );
+                }
+
+                let Ok(req_path) = req_path.canonicalize().inspect_err(|e| match e.kind() {
+                    ErrorKind::NotFound => {
+                        // Note: We explicitly log that we did not find file, because we actually went looking for it.
+                        warn!(err = ?e, uri_path, ?req_path, "File not found on file system.");
+                    }
+                    _ => {
+                        error!(err = ?e, uri_path, ?req_path, "Unexpected I/O error");
+                    }
+                }) else {
+                    // Any error resulting from the above attempt at finding canonical path
+                    // of the file is returned as a 404 Not Found error to the user agent.
+                    warn!(
+                        uri_path,
+                        ?req_path,
+                        "Returning 404 Not Found to client due to request path error."
+                    );
+                    let (status, body) = not_found();
+                    return response_builder.status(status).body(Either::Left(body));
+                };
+
+                // We disallow traversing up above the project dir.
+                //
+                // Sidenote: Well-behaved user-agents like Firefox or curl
+                // will default to resolving paths locally so that they don't
+                // attempt to go further up than "/" in the url path before they
+                // send the request. But anyone can manually send a http request
+                // that attempts to traverse outside the project root dir.
+                //
+                // For example, using telnet
+                //
+                // ```zsh
+                // telnet example.com 80
+                // ```
+                //
+                // They can send a request like say:
+                //
+                // ```http
+                // GET /../../../ HTTP/1.1
+                // Host: example.com
+                //
+                // ```
+                if !req_path.starts_with(project_dir) {
+                    warn!(
+                        uri_path,
+                        ?req_path,
+                        "Client attempted to traverse outside of project directory. Returning 404."
+                    );
+                    let (status, body) = not_found();
+                    return response_builder.status(status).body(Either::Left(body));
+                }
+                let req_path_checked = req_path;
+
+                if req_path_checked.is_dir() {
+                    handle_dir_request(req_path_checked, response_builder).await
+                } else {
+                    // TODO: Look for the file
+                    let (status, body) = not_found();
+                    response_builder.status(status).body(Either::Left(body))
+                }
             }
         }
         _ => {
+            warn!(
+                uri_path,
+                "Project server got request with unexpected request method. Returning 405."
+            );
             let (status, body) = method_not_allowed();
             response_builder.status(status).body(Either::Left(body))
         }
     }
+}
+
+/// Handle a dir request.
+///
+/// Security note: It is the responsibility of the *caller* to ensure
+/// that the requested directory is not outside the intended path.
+/// (I.e. caller has to be careful about requests like `GET /foo/../../../bar/`, etc.)
+async fn handle_dir_request<P: AsRef<Path>>(
+    req_path_checked: P,
+    response_builder: ResponseBuilder,
+) -> HttpResult<Response<Either<Full<Bytes>, BoxBody<Bytes, std::io::Error>>>> {
+    // 1. Try file "index.htm"
+    if let Ok(file) = File::open(req_path_checked.as_ref().join("index.htm")).await {
+        // Based on <https://github.com/hyperium/hyper/blob/4c84e8c1c26a1464221de96b9f39816ce7251a5f/examples/send_file.rs#L81C1-L82C42>
+        let reader_stream = ReaderStream::new(file);
+        let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
+        let boxed_body = BodyExt::boxed(stream_body);
+        return response_builder.body(Either::Right(boxed_body));
+    }
+    // 2. Try file "index.html"
+    if let Ok(file) = File::open(req_path_checked.as_ref().join("index.html")).await {
+        // Based on <https://github.com/hyperium/hyper/blob/4c84e8c1c26a1464221de96b9f39816ce7251a5f/examples/send_file.rs#L81C1-L82C42>
+        let reader_stream = ReaderStream::new(file);
+        let stream_body = StreamBody::new(reader_stream.map_ok(Frame::data));
+        let boxed_body = BodyExt::boxed(stream_body);
+        return response_builder.body(Either::Right(boxed_body));
+    }
+    // 3. Return a directory listing. (Note: This one needs to update itself as well.)
+    // TODO: dir listing
+    let (status, body) = not_found();
+    response_builder.status(status).body(Either::Left(body))
 }
 
 fn server_error() -> (StatusCode, Full<Bytes>) {
