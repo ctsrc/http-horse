@@ -526,7 +526,7 @@ async fn request_handler_project(
 
     match (method, uri_path) {
         (&Method::GET, _) => {
-            if uri_path == "" {
+            if uri_path.is_empty() {
                 handle_dir_request(project_dir, response_builder).await
             } else {
                 let uri_path = uri_path.trim_start_matches('/');
