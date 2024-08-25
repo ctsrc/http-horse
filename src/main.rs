@@ -42,6 +42,10 @@ static CACHE_CONTROL_VALUE_NO_STORE: &str = "no-store";
 static TEXT_EVENT_STREAM: &str = "text/event-stream";
 
 static IMAGE_X_ICON: &str = "image/x-icon";
+static TEXT_CSS: &str = "text/css";
+static TEXT_HTML: &str = "text/html";
+static TEXT_JAVASCRIPT: &str = "text/javascript";
+static TEXT_PLAIN: &str = "text/plain";
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -445,16 +449,21 @@ async fn request_handler_status(
     );
 
     match (method, uri_path) {
-        (&Method::GET, "") => response_builder.body(Either::Left(INTERNAL_INDEX_PAGE.into())),
+        (&Method::GET, "") => response_builder
+            .header(header::CONTENT_TYPE, HeaderValue::from_static(TEXT_HTML))
+            .body(Either::Left(INTERNAL_INDEX_PAGE.into())),
         (&Method::GET, "favicon.ico") => response_builder
             .header(header::CONTENT_TYPE, HeaderValue::from_static(IMAGE_X_ICON))
             .body(Either::Left("".into())),
-        (&Method::GET, "style/main.css") => {
-            response_builder.body(Either::Left(INTERNAL_STYLESHEET.into()))
-        }
-        (&Method::GET, "js/main.js") => {
-            response_builder.body(Either::Left(INTERNAL_JAVASCRIPT.into()))
-        }
+        (&Method::GET, "style/main.css") => response_builder
+            .header(header::CONTENT_TYPE, HeaderValue::from_static(TEXT_CSS))
+            .body(Either::Left(INTERNAL_STYLESHEET.into())),
+        (&Method::GET, "js/main.js") => response_builder
+            .header(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(TEXT_JAVASCRIPT),
+            )
+            .body(Either::Left(INTERNAL_JAVASCRIPT.into())),
         (&Method::GET, "event-stream/") => {
             let response_builder = response_builder.header(
                 header::CONTENT_TYPE,
@@ -467,16 +476,22 @@ async fn request_handler_status(
                 uri_path,
                 "Status server got request with unexpected uri path. Returning 404."
             );
-            let (status, body) = not_found();
-            response_builder.status(status).body(Either::Left(body))
+            let (status, content_type, body) = not_found();
+            response_builder
+                .header(header::CONTENT_TYPE, content_type)
+                .status(status)
+                .body(Either::Left(body))
         }
         _ => {
             warn!(
                 uri_path,
                 "Status server got request with unexpected request method. Returning 405."
             );
-            let (status, body) = method_not_allowed();
-            response_builder.status(status).body(Either::Left(body))
+            let (status, content_type, body) = method_not_allowed();
+            response_builder
+                .header(header::CONTENT_TYPE, content_type)
+                .status(status)
+                .body(Either::Left(body))
         }
     }
 }
@@ -502,8 +517,11 @@ async fn request_handler_project(
     );
 
     let Some(project_dir) = PROJECT_DIR.get() else {
-        let (status, body) = server_error();
-        let resp = response_builder.status(status).body(Either::Left(body));
+        let (status, content_type, body) = server_error();
+        let resp = response_builder
+            .header(header::CONTENT_TYPE, content_type)
+            .status(status)
+            .body(Either::Left(body));
         return resp;
     };
 
@@ -545,8 +563,11 @@ async fn request_handler_project(
                         ?req_path,
                         "Returning 404 Not Found to client due to request path error."
                     );
-                    let (status, body) = not_found();
-                    return response_builder.status(status).body(Either::Left(body));
+                    let (status, content_type, body) = not_found();
+                    return response_builder
+                        .header(header::CONTENT_TYPE, content_type)
+                        .status(status)
+                        .body(Either::Left(body));
                 };
 
                 // We disallow traversing up above the project dir.
@@ -576,8 +597,11 @@ async fn request_handler_project(
                         ?req_path,
                         "Client attempted to traverse outside of project directory. Returning 404."
                     );
-                    let (status, body) = not_found();
-                    return response_builder.status(status).body(Either::Left(body));
+                    let (status, content_type, body) = not_found();
+                    return response_builder
+                        .header(header::CONTENT_TYPE, content_type)
+                        .status(status)
+                        .body(Either::Left(body));
                 }
                 let req_path_checked = req_path;
 
@@ -585,8 +609,11 @@ async fn request_handler_project(
                     handle_dir_request(req_path_checked, response_builder).await
                 } else {
                     // TODO: Look for the file
-                    let (status, body) = not_found();
-                    response_builder.status(status).body(Either::Left(body))
+                    let (status, content_type, body) = not_found();
+                    response_builder
+                        .header(header::CONTENT_TYPE, content_type)
+                        .status(status)
+                        .body(Either::Left(body))
                 }
             }
         }
@@ -595,8 +622,11 @@ async fn request_handler_project(
                 uri_path,
                 "Project server got request with unexpected request method. Returning 405."
             );
-            let (status, body) = method_not_allowed();
-            response_builder.status(status).body(Either::Left(body))
+            let (status, content_type, body) = method_not_allowed();
+            response_builder
+                .header(header::CONTENT_TYPE, content_type)
+                .status(status)
+                .body(Either::Left(body))
         }
     }
 }
@@ -628,24 +658,33 @@ async fn handle_dir_request<P: AsRef<Path>>(
     }
     // 3. Return a directory listing. (Note: This one needs to update itself as well.)
     // TODO: dir listing
-    let (status, body) = not_found();
-    response_builder.status(status).body(Either::Left(body))
+    let (status, content_type, body) = not_found();
+    response_builder
+        .header(header::CONTENT_TYPE, content_type)
+        .status(status)
+        .body(Either::Left(body))
 }
 
-fn server_error() -> (StatusCode, Full<Bytes>) {
+fn server_error() -> (StatusCode, HeaderValue, Full<Bytes>) {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
+        HeaderValue::from_static(TEXT_PLAIN),
         INTERNAL_SERVER_ERROR_BODY_TEXT.into(),
     )
 }
 
-fn method_not_allowed() -> (StatusCode, Full<Bytes>) {
+fn method_not_allowed() -> (StatusCode, HeaderValue, Full<Bytes>) {
     (
         StatusCode::METHOD_NOT_ALLOWED,
+        HeaderValue::from_static(TEXT_PLAIN),
         METHOD_NOT_ALLOWED_BODY_TEXT.into(),
     )
 }
 
-fn not_found() -> (StatusCode, Full<Bytes>) {
-    (StatusCode::NOT_FOUND, NOT_FOUND_BODY_TEXT.into())
+fn not_found() -> (StatusCode, HeaderValue, Full<Bytes>) {
+    (
+        StatusCode::NOT_FOUND,
+        HeaderValue::from_static(TEXT_PLAIN),
+        NOT_FOUND_BODY_TEXT.into(),
+    )
 }
