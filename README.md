@@ -36,6 +36,13 @@ For example:
 
 Open the status page and the project page in your web browser.
 
+Alternatively, provide the `--open` option (`-o` for short) to have http-horse
+attempt to open the status and project pages in your system default web browser:
+
+```zsh
+RUST_LOG=debug cargo run -- --open ./example_web_project/out/
+```
+
 ### Edit a web source file
 
 Make a change to one or more of the HTML, CSS, JS, or other web files.

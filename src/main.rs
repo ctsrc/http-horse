@@ -7,7 +7,7 @@ use hyper::{
     body::{Frame, Incoming},
     header,
     header::HeaderValue,
-    http,
+    http::{self, Result as HttpResult},
     service::service_fn,
     Method, Request, Response, StatusCode,
 };
@@ -43,9 +43,15 @@ static TEXT_EVENT_STREAM: &str = "text/event-stream";
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Cli {
-    /// Project directory
-    #[arg(default_value = ".")]
-    dir: String,
+    /*
+     * Flags
+     */
+    /// Open the project and status pages in a web browser.
+    #[arg(short = 'o', long)]
+    open: bool,
+    /*
+     * Options
+     */
     /// Address to serve project on
     #[arg(short = 'l', long, default_value = "::1")]
     project_listen_addr: IpAddr,
@@ -58,6 +64,12 @@ struct Cli {
     /// Port to serve status on
     #[arg(short = 'q', long, default_value_t = 0)]
     status_listen_port: u16,
+    /*
+     * Positional arguments
+     */
+    /// Project directory
+    #[arg(default_value = ".")]
+    dir: String,
 }
 
 static PROJECT_DIR: OnceLock<String> = OnceLock::new();
@@ -81,12 +93,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let status_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
     let status_tcp = TcpListener::bind(status_addr).await?;
     let status_addr = status_tcp.local_addr()?;
-    info!("Status pages will be served on http://{status_addr}");
+    let status_url_s = format!("http://{status_addr}");
+    let status_url = &status_url_s;
+    info!("Status pages will be served on {status_url}");
 
     let project_addr = SocketAddr::new(args.status_listen_addr, args.status_listen_port);
     let project_tcp = TcpListener::bind(project_addr).await?;
     let project_addr = project_tcp.local_addr()?;
-    info!("Project pages will be served on http://{project_addr}");
+    let project_url_s = format!("http://{project_addr}");
+    let project_url = &project_url_s;
+    info!("Project pages will be served on {project_url}");
 
     /*
      * We monitor FS events in the project dir using the
@@ -193,11 +209,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut ctrl_c = pin!(tokio::signal::ctrl_c());
 
     info!("Starting status and project servers.");
-    info!("Access your project through the http-horse status user interface.");
-    info!(
-        "http-horse status user interface is accessible at http://{}",
-        status_addr
-    );
+    // Skip printing hints if we are going to attempt to open the web browser for the user.
+    if !args.open {
+        info!("Access your project through the http-horse status user interface.");
+        info!("http-horse status user interface is accessible at {status_url}");
+    }
+
+    // Attempt to open web browser for the user if they supplied the flag for doing so.
+    // If we fail to open any of the URLs, print corresponding error and instruct the user
+    // to manually open each of the URLs that we failed to open for them.
+    // These errors are considered non-fatal, and program execution continues.
+    if args.open {
+        info!("Attempting to open http-horse status page in web browser.");
+        if let Err(e) = opener::open(status_url) {
+            error!(?e, "Failed to open http-horse status page in web browser.");
+            info!("To view the http-horse status user interface, please open the following URL manually in a web browser: {status_url}");
+        }
+        info!("Attempting to open served project in web browser.");
+        if let Err(e) = opener::open(project_url) {
+            error!(?e, "Failed to open served project in web browser.");
+            info!("To view your served project, please open the following URL manually in a web browser: {project_url}");
+        }
+    }
 
     // XXX: https://github.com/hyperium/hyper-util/blob/df55abac42d0cc1e1577f771d8a1fc91f4bcd0dd/examples/server_graceful.rs
     loop {
@@ -298,7 +331,7 @@ fn event_stream() -> BoxBody<Bytes, FSEventObserverDisconnectedError> {
 
 async fn request_handler_status(
     req: Request<Incoming>,
-) -> http::Result<Response<Either<Full<Bytes>, BoxBody<Bytes, FSEventObserverDisconnectedError>>>> {
+) -> HttpResult<Response<Either<Full<Bytes>, BoxBody<Bytes, FSEventObserverDisconnectedError>>>> {
     let (method, uri_path) = (req.method(), req.uri().path());
 
     debug!("request_handler_status got request");
@@ -338,7 +371,7 @@ async fn request_handler_status(
 
 async fn request_handler_project(
     req: Request<Incoming>,
-) -> http::Result<Response<Either<Full<Bytes>, BoxBody<Bytes, std::io::Error>>>> {
+) -> HttpResult<Response<Either<Full<Bytes>, BoxBody<Bytes, std::io::Error>>>> {
     let (method, uri_path) = (req.method(), req.uri().path());
 
     debug!("request_handler_project got request");
