@@ -145,7 +145,7 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| "Failed to get local address that status server is bound to.")?;
     let status_url_s = format!("http://{status_addr}");
     let status_url = &status_url_s;
-    info!(status_url, "Status pages will be served on {status_url}");
+    info!(status_url, "Status pages will be served on <{status_url}>.");
 
     let project_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
     let project_tcp = TcpListener::bind(project_addr)
@@ -171,7 +171,10 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| "Failed to get local address that project server is bound to.")?;
     let project_url_s = format!("http://{project_addr}");
     let project_url = &project_url_s;
-    info!(project_url, "Project pages will be served on {project_url}");
+    info!(
+        project_url,
+        "Project pages will be served on <{project_url}>."
+    );
 
     /*
      * We monitor FS events in the project dir using the
@@ -282,7 +285,7 @@ async fn main() -> anyhow::Result<()> {
         info!("Access your project through the http-horse status user interface.");
         info!(
             status_url,
-            "http-horse status user interface is accessible at {status_url}"
+            "http-horse status user interface is accessible at <{status_url}>."
         );
     }
 
@@ -294,12 +297,12 @@ async fn main() -> anyhow::Result<()> {
         info!("Attempting to open http-horse status page in web browser.");
         if let Err(e) = opener::open(status_url) {
             error!(?e, "Failed to open http-horse status page in web browser.");
-            info!("To view the http-horse status user interface, please open the following URL manually in a web browser: {status_url}");
+            info!(status_url, "To view the http-horse status user interface, please open the following URL manually in a web browser: <{status_url}>.");
         }
         info!("Attempting to open served project in web browser.");
         if let Err(e) = opener::open(project_url) {
             error!(?e, "Failed to open served project in web browser.");
-            info!("To view your served project, please open the following URL manually in a web browser: {project_url}");
+            info!(project_url, "To view your served project, please open the following URL manually in a web browser: <{project_url}>.");
         }
     }
 
