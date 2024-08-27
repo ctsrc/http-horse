@@ -196,6 +196,8 @@ Future versions of `http-horse` will be designed as a modular platform that deve
 through themes and plugins. This modularity will allow users to build highly customizable and feature-rich
 web applications with minimal effort.
 
+These features are planned for inclusion in the v2.0.0 release of `http-horse`.
+
 #### Key Features
 
 - **Modular Architecture:** The platform will be designed to support various modules (such as plugins and themes)
@@ -208,12 +210,15 @@ web applications with minimal effort.
 
 #### Customizable Themes and Plugins
 
-- **Themes:** Support for loadable, customizable themes will be added, allowing users to dynamically
-  alter the appearance and layout of their web projects. These themes will be easy to apply and modify,
-  offering flexibility without the need for extensive coding.
 - **Plugins:** A powerful plugin system will be introduced, enabling the addition of new features
   and integrations to web projects without modifying the core codebase. Plugins will be managed
   through a centralized marketplace, ensuring they are secure, optimized, and easy to install.
+  See [`roadmap/v2/plugins.md`](roadmap/v2/plugins.md) for details.
+- **Themes and templates:** Support for loadable, customizable themes and templates will be added,
+  allowing users to dynamically alter the appearance and layout of their web projects.
+  These themes and templates will be easy to apply and modify, offering flexibility
+  without the need for extensive coding.
+  See [`roadmap/v2/themes.md`](roadmap/v2/themes.md) for details.
 
 ## License
 
