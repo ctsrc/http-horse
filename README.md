@@ -139,3 +139,7 @@ So:
 * The `-d` parameter specifies the working directory to run the build command in.
 * The `-C` parameter specifies source dir to watch for changes.
 * The positional argument after all flags and options have been provided specifies out-dir to watch for changes.
+
+## License
+
+http-horse is licensed under the ISC License. See the [`LICENSE`](LICENSE) file for more details.
