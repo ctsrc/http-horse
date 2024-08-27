@@ -194,11 +194,15 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 h1 {
-  font-size: 1.6rem;
+  font-size: 1.829rem;
 }
 
 h2 {
   font-size: 1.4rem;
+}
+
+h3 {
+  font-size: 1.225rem;
 }
 
 /*
@@ -222,8 +226,12 @@ li > ul {
 }
 
 #header-main {
-  padding: 0.618rem 1rem;
+  padding: 1.618rem 1rem;
   overflow-x: hidden;
+}
+
+#header-main > h2 {
+  margin-top: 0.618rem;
 }
 
 #inner-main {

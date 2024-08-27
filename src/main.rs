@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context};
+use askama::Template;
 use async_stream::stream;
 use bytes::Bytes;
 use clap::{crate_version, Parser};
@@ -26,11 +27,18 @@ use tokio::{fs::File, net::TcpListener};
 use tokio_util::io::ReaderStream;
 use tracing::{debug, error, info, warn};
 
+#[derive(Template)]
+#[template(path = "status-webui/index.htm")]
+struct StatusWebUiIndex<'a> {
+    project_dir: &'a str,
+}
+
+static INTERNAL_INDEX_PAGE: OnceLock<Vec<u8>> = OnceLock::new();
+
 static NOT_FOUND_BODY_TEXT: &[u8] = b"HTTP 404. File not found.";
 static METHOD_NOT_ALLOWED_BODY_TEXT: &[u8] = b"HTTP 405. Method not allowed.";
 static INTERNAL_SERVER_ERROR_BODY_TEXT: &[u8] = b"HTTP 500. Internal server error.";
 
-static INTERNAL_INDEX_PAGE: &[u8] = include_bytes!("../webui-src/html/index.htm");
 static INTERNAL_STYLESHEET: &[u8] = include_bytes!("../webui-src/style/main.css");
 static INTERNAL_JAVASCRIPT: &[u8] = include_bytes!("../webui-src/js/main.js");
 
@@ -120,6 +128,13 @@ async fn main() -> anyhow::Result<()> {
         .into_string()
         .inspect_err(|e| error!(os_string = ?e, "Fatal: Failed to convert PathBuf to String."))
         .map_err(|_| anyhow!("Failed to convert PathBuf to String."))?;
+
+    let internal_index_page = StatusWebUiIndex { project_dir: &pdir };
+    let internal_index_page_rendered = internal_index_page.render()?.as_bytes().to_vec();
+    INTERNAL_INDEX_PAGE
+        .set(internal_index_page_rendered)
+        .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
+        .map_err(|_| anyhow!("Failed to set value of OnceLock."))?;
 
     let status_addr = SocketAddr::new(args.status_listen_addr, args.status_listen_port);
     let status_tcp = TcpListener::bind(status_addr)
@@ -452,9 +467,19 @@ async fn request_handler_status(
     );
 
     match (method, uri_path) {
-        (&Method::GET, "") => response_builder
-            .header(header::CONTENT_TYPE, HeaderValue::from_static(TEXT_HTML))
-            .body(Either::Left(INTERNAL_INDEX_PAGE.into())),
+        (&Method::GET, "") => match INTERNAL_INDEX_PAGE.get() {
+            None => {
+                error!("Failed to get rendered index page for status web-ui!");
+                let (status, content_type, body) = server_error();
+                response_builder
+                    .header(header::CONTENT_TYPE, content_type)
+                    .status(status)
+                    .body(Either::Left(body))
+            }
+            Some(internal_index_page) => response_builder
+                .header(header::CONTENT_TYPE, HeaderValue::from_static(TEXT_HTML))
+                .body(Either::Left(internal_index_page.as_slice().into())),
+        },
         (&Method::GET, "favicon.ico") => response_builder
             .header(header::CONTENT_TYPE, HeaderValue::from_static(IMAGE_X_ICON))
             .status(StatusCode::NO_CONTENT)
