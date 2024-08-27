@@ -27,4 +27,5 @@ tokio-stream = "0.1.15"
 async-stream = "0.3.5"
 opener = "0.7.2"
 anyhow = "1.0.86"
-askama = "0.12.1"
+askama = { version = "0.12.1", features = ["serde-json"] }
+serde = { version = "1.0.209", features = ["derive"] }

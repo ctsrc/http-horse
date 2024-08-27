@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context};
 use askama::Template;
 use async_stream::stream;
 use bytes::Bytes;
-use clap::{crate_version, Parser};
+use clap::{crate_version, Parser, ValueEnum};
 use futures_util::TryStreamExt;
 use http_body_util::{combinators::BoxBody, BodyExt, Either, Full, StreamBody};
 use hyper::{
@@ -14,6 +14,7 @@ use hyper::{
     Method, Request, Response, StatusCode,
 };
 use hyper_util::rt::TokioIo;
+use serde::{Deserialize, Serialize};
 use std::{
     io::ErrorKind,
     net::{IpAddr, SocketAddr},
@@ -31,6 +32,7 @@ use tracing::{debug, error, info, warn};
 #[template(path = "status-webui/index.htm")]
 struct StatusWebUiIndex<'a> {
     project_dir: &'a str,
+    color_scheme: ColorScheme,
 }
 
 static INTERNAL_INDEX_PAGE: OnceLock<Vec<u8>> = OnceLock::new();
@@ -79,12 +81,31 @@ struct Cli {
     /// Port to serve status on
     #[arg(short = 'q', long, default_value_t = 0)]
     status_listen_port: u16,
+    /// Color theme to use for status web-ui
+    #[arg(value_enum, short = 'c', long, default_value_t = ColorScheme::GraphiteAndCopper)]
+    color_scheme: ColorScheme,
     /*
      * Positional arguments
      */
     /// Project directory
     #[arg(default_value = ".")]
     dir: String,
+}
+
+/// Color theme to use for status web-ui
+#[derive(ValueEnum, Debug, Copy, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum ColorScheme {
+    /// Midnight Purple (Dark Mode)
+    MidnightPurple,
+    /// Slate Green (Dark Mode)
+    SlateGreen,
+    /// Abyss Blue (Dark Mode)
+    AbyssBlue,
+    /// Graphite & Copper (Dark Mode)
+    GraphiteAndCopper,
+    /// Crimson & Charcoal (Dark Mode)
+    CrimsonAndCharcoal,
 }
 
 static PROJECT_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -129,7 +150,10 @@ async fn main() -> anyhow::Result<()> {
         .inspect_err(|e| error!(os_string = ?e, "Fatal: Failed to convert PathBuf to String."))
         .map_err(|_| anyhow!("Failed to convert PathBuf to String."))?;
 
-    let internal_index_page = StatusWebUiIndex { project_dir: &pdir };
+    let internal_index_page = StatusWebUiIndex {
+        project_dir: &pdir,
+        color_scheme: args.color_scheme,
+    };
     let internal_index_page_rendered = internal_index_page.render()?.as_bytes().to_vec();
     INTERNAL_INDEX_PAGE
         .set(internal_index_page_rendered)

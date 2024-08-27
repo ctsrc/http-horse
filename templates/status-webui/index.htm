@@ -1,7 +1,7 @@
 <!doctype html>
-<html lang=en>
+<html lang=en data-color-scheme={{ color_scheme|json|safe }}>
 <meta charset=utf-8>
-<title>Project {{ project_dir }} – http-horse</title>
+<title>Project {{ project_dir|safe }} – http-horse</title>
 <link rel="shortcut icon" href="data:image/x-icon;," type="image/x-icon">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel=stylesheet href=/style/main.css>
@@ -9,7 +9,7 @@
 <div id=outer-main>
 <header id=header-main>
   <h1>http-horse 🐴</h1>
-  <h2>Project <code>{{ project_dir }}</code></h2>
+  <h2>Project <code>{{ project_dir|safe }}</code></h2>
 </header>
 
 <div id=inner-main>

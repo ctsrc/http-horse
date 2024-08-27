@@ -36,11 +36,43 @@ For example:
 
 Open the status page and the project main page in your web browser.
 
-Alternatively, provide the `--open` option (`-o` for short) to have http-horse
-attempt to open the status and project pages in your system default web browser:
+#### Automatically open status and project pages in browser
+
+As an alternative to manually opening the project and status pages in a web browser,
+you can provide the `--open` option (`-o` for short) to have http-horse attempt to
+automatically open the status and project pages in your system default web browser:
 
 ```zsh
 RUST_LOG=debug cargo run -- --open ./example_web_project/out/
+```
+
+#### Status web-UI color scheme
+
+The status web-UI comes with five different built-in color schemes:
+
+- Midnight Purple (Dark Mode)
+- Slate Green (Dark Mode)
+- Abyss Blue (Dark Mode)
+- Graphite & Copper (Dark Mode)
+- Crimson & Charcoal (Dark Mode)
+
+The default color scheme for the status web-UI is *Graphite & Copper* (Dark Mode).
+
+You can provide the `--color-scheme` argument (`-c` for short) with a value
+that specifies which color scheme the status web-UI should use.
+
+The possible values for the color scheme argument are:
+
+- `midnight-purple`
+- `slate-green`
+- `abyss-blue`
+- `graphite-and-copper` (the default)
+- `crimson-and-charcoal`
+
+Example:
+
+```zsh
+RUST_LOG=debug cargo run -- -c crimson-and-charcoal --open ./example_web_project/out/
 ```
 
 ### Edit a web source file
