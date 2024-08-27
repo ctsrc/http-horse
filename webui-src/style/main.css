@@ -157,16 +157,12 @@
   color-scheme: dark;
 }
 
-a, a:active {
+a, a:active, a:visited {
   color: var(--color-text);
 }
 
 a:hover {
   color: var(--color-accent);
-}
-
-a:visited {
-  color: var(--color-primary);
 }
 
 #header-main {
