@@ -5,7 +5,8 @@
 `http-horse` is a HTTP Hot Reload Server designed for web development.
 
 With `http-horse`, your web pages stay current as you code – automatically refreshing
-HTML, CSS, JavaScript/TypeScript, and WebAssembly so you can stay in the zone.
+HTML, CSS, JavaScript/TypeScript, and WebAssembly giving you a tighter feedback loop
+so you can stay in the zone.
 
 **Note:** `http-horse` currently only supports macOS 🍎💻.
 Support for other operating systems (Linux, FreeBSD) is planned but not yet available.
