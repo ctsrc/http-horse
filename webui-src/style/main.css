@@ -64,6 +64,7 @@
   --color-secondary: var(--midnight-purple-color-secondary);
   --color-accent: var(--midnight-purple-color-accent);
   --color-text: var(--midnight-purple-color-text);
+  --color-text-alt: var(--midnight-purple-color-background);
 }
 
 /*
@@ -84,6 +85,7 @@
   --color-secondary: var(--slate-green-color-secondary);
   --color-accent: var(--slate-green-color-accent);
   --color-text: var(--slate-green-color-text);
+  --color-text-alt: var(--slate-green-color-background);
 }
 
 /*
@@ -104,6 +106,7 @@
   --color-secondary: var(--abyss-blue-color-secondary);
   --color-accent: var(--abyss-blue-color-accent);
   --color-text: var(--abyss-blue-color-text);
+  --color-text-alt: var(--abyss-blue-color-background);
 }
 
 /*
@@ -125,6 +128,7 @@
   --color-secondary: var(--graphite-and-copper-color-secondary);
   --color-accent: var(--graphite-and-copper-color-accent);
   --color-text: var(--graphite-and-copper-color-text);
+  --color-text-alt: var(--graphite-and-copper-color-background);
 }
 
 /*
@@ -145,6 +149,7 @@
   --color-secondary: var(--crimson-and-charcoal-color-secondary);
   --color-accent: var(--crimson-and-charcoal-color-accent);
   --color-text: var(--crimson-and-charcoal-color-text);
+  --color-text-alt: var(--crimson-and-charcoal-color-background);
 }
 
 /*
@@ -273,6 +278,8 @@ a[data-file] {
 
 a[data-file]:hover {
   background: var(--color-accent);
+  /* When background is the accent color, we use the alternate text color. */
+  color: var(--color-text-alt);
 }
 
 /*
