@@ -2,9 +2,10 @@
 
 [![Crates.io](https://img.shields.io/crates/v/http-horse.svg)](https://crates.io/crates/http-horse)
 
-`http-horse` is an HTTP Hot Reload Server designed for web development with HTML,
-CSS, JavaScript/TypeScript, and WebAssembly. This tool allows you to automatically
-reload your web pages as you develop, providing a seamless development experience.
+`http-horse` is a HTTP Hot Reload Server designed for web development.
+
+With `http-horse`, your web pages stay current as you code – automatically refreshing
+HTML, CSS, JavaScript/TypeScript, and WebAssembly so you can stay in the zone.
 
 **Note:** `http-horse` currently only supports macOS 🍎💻.
 Support for other operating systems (Linux, FreeBSD) is planned but not yet available.
