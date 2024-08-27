@@ -23,7 +23,11 @@ Support for other operating systems (Linux, FreeBSD) is planned but not yet avai
   - [Editing your Project Source Files](#editing-your-project-source-files)
   - [Rebuilding your Project](#rebuilding-your-project)
   - [Viewing Changes](#viewing-changes)
-- [Advanced Usage](#advanced-usage)
+- [Future Enhancements](#future-enhancements)
+  - [Tighter Integration with Existing Build Systems](#tighter-integration-with-existing-build-systems)
+  - [Modular Web Development Platform](#modular-web-development-platform)
+    - [Key Features](#key-features)
+    - [Customizable Themes and Plugins](#customizable-themes-and-plugins)
 - [License](#license)
 
 ## Installation
@@ -138,7 +142,9 @@ producing output files.
 When the project is rebuilt, the project pages that you have
 open in your browser will automatically reload to reflect the changes.
 
-## Advanced Usage
+## Future Enhancements
+
+### Tighter Integration with Existing Build Systems
 
 `http-horse` aims to support more advanced use cases, such as automatically
 running build commands when source files change. This feature is planned
@@ -179,6 +185,35 @@ Put in a bulleted list:
     are to be watched, provided that the build command (`-x` argument) and build
     working directory (`-C` argument) remains the same for all of these source directories.
 - Positional argument: Specifies the output directory to monitor for changes.
+
+### Modular Web Development Platform
+
+As `http-horse` evolves, it will transition into a more comprehensive web development platform,
+maintaining its core strength in serving and hot-reloading web projects while expanding its capabilities
+to include modularity, customization, and extensibility.
+
+Future versions of `http-horse` will be designed as a modular platform that developers can extend
+through themes and plugins. This modularity will allow users to build highly customizable and feature-rich
+web applications with minimal effort.
+
+#### Key Features
+
+- **Modular Architecture:** The platform will be designed to support various modules (such as plugins and themes)
+  that can be dynamically loaded and unloaded as needed, allowing users to tailor the platform to their
+  specific needs without unnecessary bloat.
+- **Plugin System:** A new plugin architecture will be introduced, where plugins will be distributed
+  as WebAssembly (WASM) modules. These plugins will be sandboxed for security and will interact
+  with the core platform via a stable API. This system will allow developers to easily add
+  or extend functionality without recompiling the core platform
+
+#### Customizable Themes and Plugins
+
+- **Themes:** Support for loadable, customizable themes will be added, allowing users to dynamically
+  alter the appearance and layout of their web projects. These themes will be easy to apply and modify,
+  offering flexibility without the need for extensive coding.
+- **Plugins:** A powerful plugin system will be introduced, enabling the addition of new features
+  and integrations to web projects without modifying the core codebase. Plugins will be managed
+  through a centralized marketplace, ensuring they are secure, optimized, and easy to install.
 
 ## License
 
