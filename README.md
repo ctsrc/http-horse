@@ -2,144 +2,182 @@
 
 [![Crates.io](https://img.shields.io/crates/v/http-horse.svg)](https://crates.io/crates/http-horse)
 
-HTTP Hot Reload Server for HTML, CSS, JavaScript/TypeScript and WebAssembly web development.
+`http-horse` is an HTTP Hot Reload Server designed for web development with HTML,
+CSS, JavaScript/TypeScript, and WebAssembly. This tool allows you to automatically
+reload your web pages as you develop, providing a seamless development experience.
 
-Please note that this software currently runs exclusively on macOS. 🍎💻
+**Note:** `http-horse` currently only supports macOS 🍎💻.
+Support for other operating systems (Linux, FreeBSD) is planned but not yet available.
+[Track the progress in issue #1](https://github.com/ctsrc/http-horse/issues/1).
 
-There's [an open issue (#1)](https://github.com/ctsrc/http-horse/issues/1) for supporting
-other operating systems including Linux and FreeBSD but work on that is not expected
-to happen anytime soon.
+## Table of Contents
+
+- [Installation](#installation)
+- [Building `http-horse` from git repo sources](#building-http-horse-from-git-repo-sources)
+- [Usage](#usage)
+  - [Basic Usage](#basic-usage)
+  - [Automatic Browser Launch](#automatic-browser-launch)
+  - [Status Web-UI Color Schemes](#status-web-ui-color-schemes)
+  - [Editing your Project Source Files](#editing-your-project-source-files)
+  - [Rebuilding your Project](#rebuilding-your-project)
+  - [Viewing Changes](#viewing-changes)
+- [Advanced Usage](#advanced-usage)
+- [License](#license)
+
+## Installation
+
+In the future, pre-built binaries will be provided for installation.
+
+For now, please build from git repo sources (described in the next section),
+or use cargo to install the latest release from crates.io:
+
+```zsh
+cargo install -f http-horse
+```
+
+## Building `http-horse` from git repo sources
+
+Ensure you have [Rust](https://www.rust-lang.org/) installed on your macOS system.
+Then, you can clone this repository and build the application using Cargo:
+
+```zsh
+git clone https://github.com/ctsrc/http-horse.git
+cd http-horse
+cargo build --release
+```
 
 ## Usage
 
-Have an out-dir that you want to serve, e.g. `./example_web_project/out/`.
+### Basic Usage
 
-### Serve out-dir
-
-Serve the out-dir. In this case:
+To serve a directory containing your web project's output files,
+use the following command:
 
 ```zsh
-RUST_LOG=debug cargo run -- ./example_web_project/out/
+RUST_LOG=debug cargo run --release -- ./example_web_project/out/
 ```
 
-The log output will tell you the address and port for the two servers that `http-horse` runs;
-one server for the status page, and one server for your project.
-
-For example:
+This command starts `http-horse`, which will serve both a status page
+and your project's pages. The output will provide the URLs for both servers:
 
 ```text
-[…]
 2023-10-29T05:06:49.278038Z  INFO http_horse: Status pages will be served on http://[::1]:59917
 2023-10-29T05:06:49.278089Z  INFO http_horse: Project pages will be served on http://[::1]:59918
-[…]
 ```
 
-Open the status page and the project main page in your web browser.
+Open these URLs in your web browser to view the status and project pages.
 
-#### Automatically open status and project pages in browser
+### Automatic Browser Launch
 
-As an alternative to manually opening the project and status pages in a web browser,
-you can provide the `--open` option (`-o` for short) to have http-horse attempt to
-automatically open the status and project pages in your system default web browser:
+To automatically open the status and project pages in your default web browser,
+use the `--open` option (`-o` for short):
 
 ```zsh
-RUST_LOG=debug cargo run -- --open ./example_web_project/out/
+RUST_LOG=debug cargo run --release -- --open ./example_web_project/out/
 ```
 
-#### Status web-UI color scheme
+### Status Web-UI Color Schemes
 
-The status web-UI comes with five different built-in color schemes:
+The status web-UI supports five built-in color schemes:
 
-- Midnight Purple (Dark Mode)
-- Slate Green (Dark Mode)
-- Abyss Blue (Dark Mode)
-- Graphite & Copper (Dark Mode)
-- Crimson & Charcoal (Dark Mode)
+- **Midnight Purple** (Dark Mode)
+- **Slate Green** (Dark Mode)
+- **Abyss Blue** (Dark Mode)
+- **Graphite & Copper** (Dark Mode, default)
+- **Crimson & Charcoal** (Dark Mode)
 
-The default color scheme for the status web-UI is *Graphite & Copper* (Dark Mode).
+You can select a color scheme using the `--color-scheme` (`-c`) option. For example:
 
-You can provide the `--color-scheme` argument (`-c` for short) with a value
-that specifies which color scheme the status web-UI should use.
+```zsh
+RUST_LOG=debug cargo run --release -- -c crimson-and-charcoal --open ./example_web_project/out/
+```
 
-The possible values for the color scheme argument are:
+The corresponding argument values for the available color schemes are as follows:
 
 - `midnight-purple`
 - `slate-green`
 - `abyss-blue`
-- `graphite-and-copper` (the default)
+- `graphite-and-copper`
 - `crimson-and-charcoal`
 
-Example:
+### Editing your Project Source Files
 
-```zsh
-RUST_LOG=debug cargo run -- -c crimson-and-charcoal --open ./example_web_project/out/
-```
-
-### Edit a web source file
-
-Make a change to one or more of the HTML, CSS, JS, or other web files.
-
-In the case of the example web files included with `http-horse` you find them
-in `example_web_project/www/` under the root of the repo.
+To make changes to your project, edit your project source files
+using your favorite code editor. For example:
 
 ```zsh
 $EDITOR ./example_web_project/www/index.htm
 ```
 
-### Build edited project
+### Rebuilding your Project
 
-In the example project we use a Makefile. However, you can use `http-horse`
-with any kind of build system, and it will hot reload the page in the browser for
-you when the build system changes any of the relevant files in the out-dir.
+After editing, rebuild your project.
+
+In the following example, a Makefile is used, but `http-horse` is compatible
+with any build system. All that is required is that your build system outputs
+the built files into some directory that `http-horse` can then serve from
+and watch for changes.
 
 ```zsh
 cd example_web_project/
 make
 ```
 
-### Look at project page
+See [`example_web_project/GNUmakefile`](example_web_project/GNUmakefile)
+for a very basic sample makefile that copies an index html source file
+from `example_web_project/www/` into `example_web_project/out/` without
+making any changes to it. The principle remains the same although in
+the real world you would usually have your build system make some
+kind of transformation on the source file or source files when
+producing output files.
 
-Observe in the browser that the pages from your project which you have open
-in your browser will hot reload when the build system makes relevant changes
-in the out-dir.
+### Viewing Changes
 
-## Advanced usage
+When the project is rebuilt, the project pages that you have
+open in your browser will automatically reload to reflect the changes.
 
-Instead of manually invoking the build system, you can tell `http-horse`
-where the source files are, and what command to run in order to run the build system.
+## Advanced Usage
 
-(Implementation of this feature has not yet started.)
+`http-horse` aims to support more advanced use cases, such as automatically
+running build commands when source files change. This feature is planned
+for future releases.
 
-Example:
+Example of the intended usage (feature not yet implemented):
 
 ```zsh
-RUST_LOG=debug cargo run -- -c "make" -d example_web_project/ -C example_web_project/www/ example_web_project/out/
+RUST_LOG=debug cargo run --release -- -c "make" -d example_web_project/ -C example_web_project/www/ example_web_project/out/
 ```
 
-where:
+Explanation of parameters in form of an ASCII "diagram":
 
 ```text
-RUST_LOG=debug cargo run -- -c "make" -d example_web_project/ -C example_web_project/www/ example_web_project/out/
+RUST_LOG=debug cargo run --release -- -c "make" -C example_web_project/ -w example_web_project/www/ example_web_project/out/
 
-                               ^         ^                       ^                        ^
-  -c specifies build command  -'         |                       |                        |
-     to run when changes are             `------------.          |                        |
-     made in source dir.                              |          |                        |
-                                                      |          |                        |
-  -d specifies working dir to run build command in.  -'          |                        |
-                                                                 |                        |
-  -C specifies source dir to watch for changes.  ----------------'                        |
-                                                                                          |
-  Positional argument specifies out-dir to watch for changes.  ---------------------------'
+                                         ^         ^                       ^                        ^
+  -c defines build command to run  ------'         '--.                    |                        |
+     when changes are detected in                     |                    |                        |
+     the source dir.                                  |                    |                        |
+                                                      |                    |                        |
+  -C specifies working dir to run build command in.  -'                    |                        |
+                                                                           |                        |
+  -w indicates source dir to watch for changes.  --------------------------'                        |
+                                                                                                    |
+  Positional argument specifies out-dir to watch for changes.  -------------------------------------'
 ```
 
-So:
+Put in a bulleted list:
 
-* The `-c` parameter specifies the build command to run when changes are made in source dir.
-* The `-d` parameter specifies the working directory to run the build command in.
-* The `-C` parameter specifies source dir to watch for changes.
-* The positional argument after all flags and options have been provided specifies out-dir to watch for changes.
+- `-c`: Defines the build command to run when changes are detected in the source directory.
+  * The build command can be the name of a single command (such as, `"make"`), but it can
+    also include any parameters that you want to pass to the build command.
+    E.g.: `"make -B -d"`
+- `-C`: Specifies the working directory in which the build command is to be executed.
+- `-w`: Indicates the directory to watch for source file changes.
+  * This argument can be repeated multiple times if multiple different source directories
+    are to be watched, provided that the build command (`-c` argument) and build
+    working directory (`-C` argument) remains the same for all of these source directories.
+- Positional argument: Specifies the output directory to monitor for changes.
 
 ## License
 
-http-horse is licensed under the ISC License. See the [`LICENSE`](LICENSE) file for more details.
+`http-horse` is licensed under the ISC License. See the [`LICENSE`](LICENSE) file for details.
