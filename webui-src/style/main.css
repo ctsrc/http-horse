@@ -1,5 +1,5 @@
-/*
- * Copyright (c) 2020 Erik Nordstrøm <erik@nordstroem.no>
+/**
+ * Copyright (c) 2020, 2024 Erik Nordstrøm <erik@nordstroem.no>
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -14,131 +14,267 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-*
-{
+
+/*
+ * # Main css file for http-horse status web-ui
+ */
+
+/*
+ * ## General box-sizing
+ */
+
+* {
   margin: 0;
   padding: 0;
-  font-weight: 400;
   box-sizing: inherit;
 }
 
-:root
-{
-  background-color: hsl(0, 0%, 19%);
-  color: hsl(208, 15%, 77%);
-  font-family: sans-serif;
+:root {
   box-sizing: border-box;
+}
+
+/*
+ * ## General margins and paddings
+ */
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+/*
+ * ## Color schemes
+ */
+
+/*
+ * ### Color scheme: Midnight Purple (Dark Mode)
+ */
+
+:root {
+  --midnight-purple-color-background: /* Deep Charcoal Purple */ #1E1B29;
+  --midnight-purple-color-primary: /*    Dark Purple          */ #3E2C56;
+  --midnight-purple-color-secondary: /*  Muted Lavender       */ #715B94;
+  --midnight-purple-color-accent: /*     Soft Mauve           */ #A68EBB;
+  --midnight-purple-color-text: /*       Light Gray           */ #E0E0E0;
+}
+
+:root[data-color-scheme="midnight-purple"] {
+  --color-background: var(--midnight-purple-color-background);
+  --color-primary: var(--midnight-purple-color-primary);
+  --color-secondary: var(--midnight-purple-color-secondary);
+  --color-accent: var(--midnight-purple-color-accent);
+  --color-text: var(--midnight-purple-color-text);
+}
+
+/*
+ * ### Color scheme: Slate Green (Dark Mode)
+ */
+
+:root {
+  --slate-green-color-background: /* Charcoal Green   */ #2B3A42;
+  --slate-green-color-primary: /*    Dark Slate Green */ #3F5C59;
+  --slate-green-color-secondary: /*  Muted Moss Green */ #607D74;
+  --slate-green-color-accent: /*     Soft Sage        */ #A2C4BF;
+  --slate-green-color-text: /*       Pale Mint        */ #D8E1E0;
+}
+
+:root[data-color-scheme="slate-green"] {
+  --color-background: var(--slate-green-color-background);
+  --color-primary: var(--slate-green-color-primary);
+  --color-secondary: var(--slate-green-color-secondary);
+  --color-accent: var(--slate-green-color-accent);
+  --color-text: var(--slate-green-color-text);
+}
+
+/*
+ * ### Color scheme: Abyss Blue (Dark Mode)
+ */
+
+:root {
+  --abyss-blue-color-background: /* Deep Blue Black  */ #0E1A26;
+  --abyss-blue-color-primary: /*    Midnight Blue    */ #1F3548;
+  --abyss-blue-color-secondary: /*  Desaturated Teal */ #41607A;
+  --abyss-blue-color-accent: /*     Pale Turquoise   */ #6EA8BD;
+  --abyss-blue-color-text: /*       Cool Gray        */ #E8F0F2;
+}
+
+:root[data-color-scheme="abyss-blue"] {
+  --color-background: var(--abyss-blue-color-background);
+  --color-primary: var(--abyss-blue-color-primary);
+  --color-secondary: var(--abyss-blue-color-secondary);
+  --color-accent: var(--abyss-blue-color-accent);
+  --color-text: var(--abyss-blue-color-text);
+}
+
+/*
+ * ### Color scheme: Graphite & Copper (Dark Mode)
+ */
+
+:root {
+  --graphite-and-copper-color-background: /* Graphite Black */ #1C1C1C;
+  --graphite-and-copper-color-primary: /*    Dark Gray      */ #333333;
+  --graphite-and-copper-color-secondary: /*  Medium Gray    */ #545454;
+  --graphite-and-copper-color-accent: /*     Copper         */ #BB8647;
+  --graphite-and-copper-color-text: /*       White          */ #FFFFFF;
+}
+
+/* Graphite & Copper is the default color scheme unless otherwise is specified. */
+:root:not([data-color-scheme]), :root[data-color-scheme="graphite-and-copper"] {
+  --color-background: var(--graphite-and-copper-color-background);
+  --color-primary: var(--graphite-and-copper-color-primary);
+  --color-secondary: var(--graphite-and-copper-color-secondary);
+  --color-accent: var(--graphite-and-copper-color-accent);
+  --color-text: var(--graphite-and-copper-color-text);
+}
+
+/*
+ * ### Color scheme: Crimson & Charcoal (Dark Mode)
+ */
+
+:root {
+  --crimson-and-charcoal-color-background: /* Charcoal Black  */ #2B2B2B;
+  --crimson-and-charcoal-color-primary: /*    Crimson         */ #4A1E26;
+  --crimson-and-charcoal-color-secondary: /*  Dark Burgundy   */ #7D3A40;
+  --crimson-and-charcoal-color-accent: /*     Rosewood        */ #B56468;
+  --crimson-and-charcoal-color-text: /*       Very Light Gray */ #ECECEC;
+}
+
+:root[data-color-scheme="crimson-and-charcoal"] {
+  --color-background: var(--crimson-and-charcoal-color-background);
+  --color-primary: var(--crimson-and-charcoal-color-primary);
+  --color-secondary: var(--crimson-and-charcoal-color-secondary);
+  --color-accent: var(--crimson-and-charcoal-color-accent);
+  --color-text: var(--crimson-and-charcoal-color-text);
+}
+
+/*
+ * ## General color and styling
+ */
+
+:root {
+  background-color: var(--color-background);
+  color: var(--color-text);
+  color-scheme: dark;
+}
+
+a, a:active {
+  color: var(--color-text);
+}
+
+a:hover {
+  color: var(--color-accent);
+}
+
+a:visited {
+  color: var(--color-primary);
+}
+
+#header-main {
+  background-color: var(--color-primary);
+}
+
+/*
+ * ## General typography
+ */
+
+:root {
+  font-family: sans-serif;
   font-size: 12pt;
+  font-weight: 100;
 }
 
 @media (min-resolution: 192dpi) {
-  :root
-  {
+  :root {
     font-size: 10pt;
   }
 }
 
-h1
-{
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 200;
+}
+
+h1 {
   font-size: 1.6rem;
 }
 
-h2
-{
+h2 {
   font-size: 1.4rem;
 }
 
-a, a:hover, a:active, a:visited
-{
-  color: hsl(208, 15%, 77%);
-}
+/*
+ * ## General list appearance
+ */
 
-ul
-{
+ul {
   list-style-type: none;
 }
 
-li > ul
-{
+li > ul {
   margin-left: 1rem;
 }
 
-#outer-main
-{
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  padding-top: 0.618rem;
+/*
+ * ## Margins and paddings for main containers
+ */
+
+#outer-main {
   padding-bottom: 0.618rem;
 }
 
-#header-main
-{
-  padding-right: 1rem;
-  padding-left: 1rem;
+#header-main {
+  padding: 0.618rem 1rem;
   overflow-x: hidden;
-  flex-shrink: 0;
 }
 
-#inner-main
-{
-  flex-grow: 1;
-  flex-shrink: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: row;
-}
-
-#file-pane
-{
-  padding-right: 1rem;
-  padding-left: 1rem;
-  flex-grow: 1;
-  flex-shrink: 1;
-  min-height: 0;
-  max-width: 500px;
-  display: flex;
-  flex-direction: column;
-}
-
-#file-serve-state,
-#recent-file-history
-{
-  margin-top: 1rem;
-  flex-grow: 1;
-  flex-shrink: 1;
-  flex-basis: 0;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  max-height: max-content;
-}
-
-#files
-{
-  flex-shrink: 1;
-  overflow-y: auto;
-}
-
-#history-entries
-{
-  flex-grow: 1;
-  flex-shrink: 1;
-  overflow-y: auto;
-}
-
-#files > li
-{
-  background: hsl(208, 4%, 25%);
-  margin-top: 0.618rem;
-}
-
-[data-file]
-{
+#inner-main {
   padding: 1rem;
 }
 
-[data-file]:hover
-{
+/*
+ * ## Page layout
+ */
+
+#outer-main {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+#header-main {
+  flex-shrink: 0;
+}
+
+#inner-main {
+  flex-grow: 1;
+  flex-shrink: 1;
+  min-height: 0;
+}
+
+/*
+ * ## Margins and paddings between sections
+ */
+
+#inner-main > section + section {
+  margin-top: 0.618rem; /* NOTE: Same as margin-top of #list-pages-and-their-resources > li.page */
+}
+
+/*
+ * ## Section: Pages and their resources
+ */
+
+#list-pages-and-their-resources > li.page {
+  margin-top: 0.618rem;
+}
+
+a[data-file] {
+  padding: 0.1337rem;
+  display: block;
+}
+
+a[data-file]:hover {
   background: hsl(208, 55%, 45%);
 }
+
+/*
+ * ## Section: Recent file system event history
+ */

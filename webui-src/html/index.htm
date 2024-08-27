@@ -5,59 +5,37 @@
 <link rel="shortcut icon" href="data:image/x-icon;," type="image/x-icon">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel=stylesheet href=/style/main.css>
+
 <div id=outer-main>
-<header id=header-main>
-<h1><code>example/out/</code></h1>
-</header>
+<header id=header-main><h1>Status for <code>example/out/</code></h1></header>
+
 <div id=inner-main>
-<div id=file-pane>
-<section id=file-serve-state>
-<header>
-<h2>File serve state</h2>
-</header>
-<ul id=files>
-<li>
-<div data-file=/index.htm data-filetype=html>
-<code data-filename><a href=http://[::1]:8080/>/index.htm</a></code>
-</div>
-<ul>
-<li>
-<div data-file=/js/main.js data-filetype=js>
-<code data-filename data-reverse-dep-count=2>/js/main.js</code>
-</div>
-<li>
-<div data-file=/style/main.css data-filetype=css>
-<code data-filename data-reverse-dep-count=2>/style/main.css</code>
-</div>
-</ul>
-<li>
-<div data-file=/foo/bar data-filetype=html>
-<code data-filename><a href=http://[::1]:8080/foo/bar.htm>/foo/bar.htm</a></code>
-</div>
-<ul>
-<li>
-<div data-file data-filetype=js>
-<code data-filename data-reverse-dep-count=1>/js/foobar.js</code>
-</div>
-<li>
-<div data-file data-filetype=css>
-<code data-filename data-reverse-dep-count=1>/style/foobar.css</code>
-</div>
-<li>
-<div data-file data-filetype=js>
-<code data-filename data-reverse-dep-count=2>/js/main.js</code>
-</div>
-<li>
-<div data-file data-filetype=css>
-<code data-filename data-reverse-dep-count=2>/style/main.css</code>
-</div>
-</ul>
+
+<section id=pages-and-their-resources>
+<header><h2>Pages and their resources</h2></header>
+<ul id=list-pages-and-their-resources>
+
+<li class=page>
+  <a data-file=/index.htm data-filetype=html href=#project-out-file-03ab2805><code data-filename>/index.htm</code></a>
+  <ul class=list-page-resources>
+    <li class=page-resource><a data-file=/js/main.js data-filetype=js href=#project-out-file-f10d571e><code data-filename>/js/main.js</code></a>
+    <li class=page-resource><a data-file=/style/main.css data-filetype=css href=#project-out-file-ac346ecd><code data-filename>/style/main.css</code></a>
+  </ul>
+
+<li class=page>
+<a data-file=/foo/bar.htm data-filetype=html href=#project-out-file-03bddc5a><code data-filename>/foo/bar.htm</code></a>
+  <ul class=list-page-resources>
+    <li class=page-resource><a data-file data-filetype=js href=#project-out-file-0c2cf224><code data-filename>/js/foobar.js</code></a>
+    <li class=page-resource><a data-file data-filetype=css href=#project-out-file-6fc89e2d><code data-filename>/style/foobar.css</code></a>
+    <li class=page-resource><a data-file data-filetype=js href=#project-out-file-f10d571e><code data-filename>/js/main.js</code></a>
+    <li class=page-resource><a data-file data-filetype=css href=#project-out-file-ac346ecd><code data-filename>/style/main.css</code></a>
+  </ul>
+
 </ul>
 </section>
-<section id=recent-file-history>
-<header>
-<h2>Recent file history</h2>
-</header>
+
+<section id=history-recent-file-system-events>
+<header><h2>Recent file system event history</h2></header>
 <div id=history-entries>
 <p>entry</p>
 <p>entry</p>
@@ -68,7 +46,9 @@
 <p>entry</p>
 </div>
 </section>
-</div>
-</div>
-</div>
+
+</div><!-- end of inner-main -->
+
+</div><!-- end of outer-main -->
+
 <script src=/js/main.js></script>
