@@ -157,12 +157,8 @@
   color-scheme: dark;
 }
 
-a, a:active, a:visited {
+a, a:hover, a:active, a:visited {
   color: var(--color-text);
-}
-
-a:hover {
-  color: var(--color-accent);
 }
 
 #header-main {
@@ -276,7 +272,7 @@ a[data-file] {
 }
 
 a[data-file]:hover {
-  background: hsl(208, 55%, 45%);
+  background: var(--color-accent);
 }
 
 /*
