@@ -145,16 +145,16 @@ for future releases.
 Example of the intended usage (feature not yet implemented):
 
 ```zsh
-RUST_LOG=debug cargo run --release -- -c "make" -d example_web_project/ -C example_web_project/www/ example_web_project/out/
+RUST_LOG=debug cargo run --release -- -x "make" -C example_web_project/ -w example_web_project/www/ example_web_project/out/
 ```
 
 Explanation of parameters in form of an ASCII "diagram":
 
 ```text
-RUST_LOG=debug cargo run --release -- -c "make" -C example_web_project/ -w example_web_project/www/ example_web_project/out/
+RUST_LOG=debug cargo run --release -- -x "make" -C example_web_project/ -w example_web_project/www/ example_web_project/out/
 
                                          ^         ^                       ^                        ^
-  -c defines build command to run  ------'         '--.                    |                        |
+  -x defines build command to run  ------'         '--.                    |                        |
      when changes are detected in                     |                    |                        |
      the source dir.                                  |                    |                        |
                                                       |                    |                        |
@@ -167,14 +167,14 @@ RUST_LOG=debug cargo run --release -- -c "make" -C example_web_project/ -w examp
 
 Put in a bulleted list:
 
-- `-c`: Defines the build command to run when changes are detected in the source directory.
+- `-x`: Defines the build command to run when changes are detected in the source directory.
   * The build command can be the name of a single command (such as, `"make"`), but it can
     also include any parameters that you want to pass to the build command.
     E.g.: `"make -B -d"`
 - `-C`: Specifies the working directory in which the build command is to be executed.
 - `-w`: Indicates the directory to watch for source file changes.
   * This argument can be repeated multiple times if multiple different source directories
-    are to be watched, provided that the build command (`-c` argument) and build
+    are to be watched, provided that the build command (`-x` argument) and build
     working directory (`-C` argument) remains the same for all of these source directories.
 - Positional argument: Specifies the output directory to monitor for changes.
 
