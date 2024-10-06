@@ -17,12 +17,10 @@ use hyper::{
     service::service_fn,
     Method, Request, Response, StatusCode,
 };
-use macro_rules_attribute::apply;
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
-use smol::{fs::File, io::AsyncReadExt, net::TcpListener, Timer};
+use smol::{block_on, fs::File, io::AsyncReadExt, net::TcpListener, Executor, Timer};
 use smol_hyper::rt::{FuturesIo, SmolExecutor, SmolTimer};
-use smol_macros::{main, Executor};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
 use std::{
@@ -118,8 +116,16 @@ enum ColorScheme {
 
 static PROJECT_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-#[apply(main!)]
-async fn main(ex: &Executor<'_>) -> anyhow::Result<()> {
+/// This `main` function is part synchronous and part async.
+/// Up to a certain point of the program start up, everything that we need to happen is synchronous.
+/// And after that it's a mixture of synchronous and async things.
+/// Because of this, we do not mark the main function as a whole as `async fn`.
+/// Instead, the async stuff begins a bit further down in the code.
+fn main() -> anyhow::Result<()> {
+    /*
+     * Synchronous parts of setup from this point and up until the block comment about start of async.
+     */
+
     // Install global collector configured based on RUST_LOG env var.
     tracing_subscriber::fmt::init();
 
@@ -279,287 +285,302 @@ async fn main(ex: &Executor<'_>) -> anyhow::Result<()> {
         })
     }?;
 
-    let project_dir_tree = {
-        let span = info_span!("Initial full scan of project directory");
-        let instant_start_scan = Instant::now();
-        let project_dir_tree = ex
-            .spawn(scan_project_dir(project_dir.clone()).instrument(span.clone()))
-            .await?;
-        let t_spent_scanning = Instant::now() - instant_start_scan;
+    {
+        let span = info_span!("Render internal index page");
         span.in_scope(|| {
-            info!(
-                ?t_spent_scanning,
-                "Finished initial full scan of project directory."
-            );
-            trace!(?project_dir_tree, "Project dir tree.");
-            project_dir_tree
+            let internal_index_page = StatusWebUiIndex {
+                project_dir: &pdir,
+                color_scheme: args.color_scheme,
+            };
+            let internal_index_page_rendered = internal_index_page.render()?.as_bytes().to_vec();
+            INTERNAL_INDEX_PAGE
+                .set(internal_index_page_rendered)
+                .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
+                .map_err(|_| anyhow!("Failed to set value of OnceLock."))?;
+            debug!("Successfully rendered internal index page.");
+            Ok::<_, anyhow::Error>(())
         })
-    };
-
-    let internal_index_page = StatusWebUiIndex {
-        project_dir: &pdir,
-        color_scheme: args.color_scheme,
-    };
-    let internal_index_page_rendered = internal_index_page.render()?.as_bytes().to_vec();
-    INTERNAL_INDEX_PAGE
-        .set(internal_index_page_rendered)
-        .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
-        .map_err(|_| anyhow!("Failed to set value of OnceLock."))?;
+    }?;
 
     let status_addr = SocketAddr::new(args.status_listen_addr, args.status_listen_port);
-    let status_tcp = TcpListener::bind(status_addr)
-        .await
-        .inspect_err(|e| {
-            error!(
-                err = ?e,
-                ?status_addr,
-                "Fatal: Failed to bind TCP listener for status server."
-            )
-        })
-        .with_context(|| "Failed to bind TCP listener for status server.")?;
-    let status_addr = status_tcp
-        .local_addr()
-        .inspect_err(|e| {
-            error!(
-                err = ?e,
-                ?status_addr,
-                ?status_tcp,
-                "Fatal: Failed to get local address that status server is bound to."
-            )
-        })
-        .with_context(|| "Failed to get local address that status server is bound to.")?;
-    let status_url_s = format!("http://{status_addr}");
-    let status_url = &status_url_s;
-    info!(status_url, "Status pages will be served on <{status_url}>.");
-
     let project_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
-    let project_tcp = TcpListener::bind(project_addr)
-        .await
-        .inspect_err(|e| {
-            error!(
-                err = ?e,
-                ?project_addr,
-                "Fatal: Failed to bind TCP listener for project server."
-            )
-        })
-        .with_context(|| "Failed to bind TCP listener for project server.")?;
-    let project_addr = project_tcp
-        .local_addr()
-        .inspect_err(|e| {
-            error!(
-                err = ?e,
-                ?project_addr,
-                ?project_tcp,
-                "Fatal: Failed to get local address that project server is bound to."
-            )
-        })
-        .with_context(|| "Failed to get local address that project server is bound to.")?;
-    let project_url_s = format!("http://{project_addr}");
-    let project_url = &project_url_s;
-    info!(
-        project_url,
-        "Project pages will be served on <{project_url}>."
-    );
 
-    let project_out_fs_event_transformer_handle = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(15));
-        // TODO: Create initial temp file in project dir
-        // TODO: Start a timer so we can check how long has passed since we created initial temp file.
-        // TODO: Integrate with initial scan of project dir
-        'skip_up_to_temp_file: loop {
-            match project_out_fs_event_rx.recv() {
-                Ok(fs_ev) => {
-                    debug!(?fs_ev, "fs event");
-                    if false
-                    // TODO: If this event corresponds to the creation of the initial temp file
-                    {
-                        break 'skip_up_to_temp_file;
-                    } else {
-                        // TODO: Check how much time has passed since initial temp file was created
-                        // TODO: If more than 30 seconds has passed, create a new temp file
-                        //       and rescan project dir. Skip all events up to new temp file.
-                    }
-                }
-                Err(e) => error!(err = ?e, "fs event recv error!"),
-            };
-        }
-        loop {
-            match project_out_fs_event_rx.recv() {
-                Ok(fs_ev) => {
-                    if false
-                    // TODO: If event type is move
-                    {
-                        // TODO: Create temp file in project dir
-                        // TODO: Start a timer so we can check how long has passed since we created temp file.
-                        // TODO: Rescan of project dir
-                        'skip_up_to_temp_file: loop {
-                            match project_out_fs_event_rx.recv() {
-                                Ok(fs_ev) => {
-                                    debug!(?fs_ev, "fs event");
-                                    if false
-                                    // TODO: If this event corresponds to the creation of the temp file
-                                    {
-                                        break 'skip_up_to_temp_file;
-                                    } else {
-                                        // TODO: Check how much time has passed since temp file was created
-                                        // TODO: If more than n seconds has passed, create a new temp file
-                                        //       and rescan project dir. Skip all events up to new temp file.
-                                        //       n is exponentially increasing for each time this happens,
-                                        //       up to an upper limit of 10 minutes.
-                                    }
-                                }
-                                Err(e) => error!(err = ?e, "fs event recv error!"),
-                            };
-                        }
-                    } else {
-                        info!(?fs_ev, "fs event")
-                    }
-                }
-                Err(e) => error!(err = ?e, "fs event recv error!"),
-            };
-        }
-    });
+    /*
+     * Anything async goes here.
+     */
+    let ex = Executor::new();
+    block_on(ex.run(async {
+        let project_dir_tree = {
+            let span = info_span!("Initial full scan of project directory");
+            let instant_start_scan = Instant::now();
+            let project_dir_tree = ex
+                .spawn(scan_project_dir(project_dir.clone()).instrument(span.clone()))
+                .await?;
+            let t_spent_scanning = Instant::now() - instant_start_scan;
+            span.in_scope(|| {
+                info!(
+                    ?t_spent_scanning,
+                    "Finished initial full scan of project directory."
+                );
+                trace!(?project_dir_tree, "Project dir tree.");
+                project_dir_tree
+            })
+        };
 
-    let server = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
-    let graceful = hyper_util::server::graceful::GracefulShutdown::new();
+        let status_tcp = TcpListener::bind(status_addr)
+            .await
+            .inspect_err(|e| {
+                error!(
+                    err = ?e,
+                    ?status_addr,
+                    "Fatal: Failed to bind TCP listener for status server."
+                )
+            })
+            .with_context(|| "Failed to bind TCP listener for status server.")?;
+        let status_addr = status_tcp
+            .local_addr()
+            .inspect_err(|e| {
+                error!(
+                    err = ?e,
+                    ?status_addr,
+                    ?status_tcp,
+                    "Fatal: Failed to get local address that status server is bound to."
+                )
+            })
+            .with_context(|| "Failed to get local address that status server is bound to.")?;
+        let status_url_s = format!("http://{status_addr}");
+        let status_url = &status_url_s;
+        info!(status_url, "Status pages will be served on <{status_url}>.");
 
-    info!("Starting status and project servers.");
-    // Skip printing hints if we are going to attempt to open the web browser for the user.
-    if !args.open {
-        info!("Access your project through the http-horse status user interface.");
+        let project_tcp = TcpListener::bind(project_addr)
+            .await
+            .inspect_err(|e| {
+                error!(
+                    err = ?e,
+                    ?project_addr,
+                    "Fatal: Failed to bind TCP listener for project server."
+                )
+            })
+            .with_context(|| "Failed to bind TCP listener for project server.")?;
+        let project_addr = project_tcp
+            .local_addr()
+            .inspect_err(|e| {
+                error!(
+                    err = ?e,
+                    ?project_addr,
+                    ?project_tcp,
+                    "Fatal: Failed to get local address that project server is bound to."
+                )
+            })
+            .with_context(|| "Failed to get local address that project server is bound to.")?;
+        let project_url_s = format!("http://{project_addr}");
+        let project_url = &project_url_s;
         info!(
-            status_url,
-            "http-horse status user interface is accessible at <{status_url}>."
+            project_url,
+            "Project pages will be served on <{project_url}>."
         );
-    }
 
-    // Attempt to open web browser for the user if they supplied the flag for doing so.
-    // If we fail to open any of the URLs, print corresponding error and instruct the user
-    // to manually open each of the URLs that we failed to open for them.
-    // These errors are considered non-fatal, and program execution continues.
-    if args.open {
-        info!("Attempting to open http-horse status page in web browser.");
-        if let Err(e) = opener::open(status_url) {
-            error!(?e, "Failed to open http-horse status page in web browser.");
-            info!(status_url, "To view the http-horse status user interface, please open the following URL manually in a web browser: <{status_url}>.");
-        }
-        info!("Attempting to open served project in web browser.");
-        if let Err(e) = opener::open(project_url) {
-            error!(?e, "Failed to open served project in web browser.");
-            info!(project_url, "To view your served project, please open the following URL manually in a web browser: <{project_url}>.");
-        }
-    }
-
-    let mut spawned_tasks = vec![];
-
-    // XXX: https://github.com/hyperium/hyper-util/blob/df55abac42d0cc1e1577f771d8a1fc91f4bcd0dd/examples/server_graceful.rs
-    loop {
-        select! {
-            /*
-             * TODO: Enable TCP_NODELAY for accepted connections.
-             *
-             * XXX: For details about TCP_NODELAY, see
-             *      https://github.com/hyperium/hyper/issues/1997
-             *      https://en.wikipedia.org/wiki/Nagle%27s_algorithm
-             *      https://www.extrahop.com/company/blog/2016/tcp-nodelay-nagle-quickack-best-practices/
-             */
-
-            /*
-             * Serving of files for the project that the user is working on.
-             */
-            project_conn = project_tcp.accept().fuse() => {
-                let (stream, peer_addr) = match project_conn {
-                    Ok(conn) => conn,
-                    Err(e) => {
-                        error!(err = ?e, "Accept error");
-                        Timer::after(Duration::from_secs(1)).await;
-                        continue;
+        let project_out_fs_event_transformer_handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(15));
+            // TODO: Create initial temp file in project dir
+            // TODO: Start a timer so we can check how long has passed since we created initial temp file.
+            // TODO: Integrate with initial scan of project dir
+            'skip_up_to_temp_file: loop {
+                match project_out_fs_event_rx.recv() {
+                    Ok(fs_ev) => {
+                        debug!(?fs_ev, "fs event");
+                        if false
+                        // TODO: If this event corresponds to the creation of the initial temp file
+                        {
+                            break 'skip_up_to_temp_file;
+                        } else {
+                            // TODO: Check how much time has passed since initial temp file was created
+                            // TODO: If more than 30 seconds has passed, create a new temp file
+                            //       and rescan project dir. Skip all events up to new temp file.
+                        }
                     }
+                    Err(e) => error!(err = ?e, "fs event recv error!"),
                 };
-                debug!(?peer_addr, "Incoming connection accepted on project_tcp");
-                let stream = FuturesIo::new(stream);
-                let conn = server.serve_connection_with_upgrades(stream, service_fn(request_handler_project));
-                let conn = graceful.watch(conn.into_owned());
-                let task = ex.spawn(async move {
-                    debug!("Spawned task for connection on connection from project_tcp.");
-                    if let Err(e) = conn.await {
-                        // We log this error at debug level because it is usually not interesting.
-                        // Known, uninteresting things (from error level logs perspective)
-                        // that trigger this error:
-                        // - In the case where user closes browser tab, we get a connection error
-                        //   if a message was still in progress of being sent.
-                        // - If the user agent is sends just `GET /` without specifying HTTP version,
-                        //   as they used to do for what we now sometimes refer to as HTTP/0.9,
-                        //   we get an "invalid URI" error.
-                        //   Conversely:
-                        //   * A client that sends `GET / HTTP/1.1` gets a HTTP/1.1 response
-                        //     as one would expect.
-                        //   * A client that sends `GET / HTTP/1.0` gets a HTTP/1.0 response
-                        //     as one might expect.
-                        // TODO: Any cases that would warrant logging this at level error?
-                        debug!(err = e, "Connection error");
+            }
+            loop {
+                match project_out_fs_event_rx.recv() {
+                    Ok(fs_ev) => {
+                        if false
+                        // TODO: If event type is move
+                        {
+                            // TODO: Create temp file in project dir
+                            // TODO: Start a timer so we can check how long has passed since we created temp file.
+                            // TODO: Rescan of project dir
+                            'skip_up_to_temp_file: loop {
+                                match project_out_fs_event_rx.recv() {
+                                    Ok(fs_ev) => {
+                                        debug!(?fs_ev, "fs event");
+                                        if false
+                                        // TODO: If this event corresponds to the creation of the temp file
+                                        {
+                                            break 'skip_up_to_temp_file;
+                                        } else {
+                                            // TODO: Check how much time has passed since temp file was created
+                                            // TODO: If more than n seconds has passed, create a new temp file
+                                            //       and rescan project dir. Skip all events up to new temp file.
+                                            //       n is exponentially increasing for each time this happens,
+                                            //       up to an upper limit of 10 minutes.
+                                        }
+                                    }
+                                    Err(e) => error!(err = ?e, "fs event recv error!"),
+                                };
+                            }
+                        } else {
+                            info!(?fs_ev, "fs event")
+                        }
                     }
-                    debug!(?peer_addr, "Connection dropped");
-                });
-                spawned_tasks.push(task);
-            },
-
-            /*
-             * Serving of status pages, showing status and history.
-             */
-            status_conn = status_tcp.accept().fuse() => {
-                let (stream, peer_addr) = match status_conn {
-                    Ok(conn) => conn,
-                    Err(e) => {
-                        error!(err = ?e, "Accept error");
-                        Timer::after(Duration::from_secs(1)).await;
-                        continue;
-                    }
+                    Err(e) => error!(err = ?e, "fs event recv error!"),
                 };
-                debug!(?peer_addr, "Incoming connection accepted on status_tcp");
-                let stream = FuturesIo::new(stream);
-                let conn = server.serve_connection_with_upgrades(stream, service_fn(request_handler_status));
-                let conn = graceful.watch(conn.into_owned());
-                let task = ex.spawn(async move {
-                    debug!("Spawned task for connection on connection from status_tcp.");
-                    if let Err(e) = conn.await {
-                        // We log this error at debug level because it is usually not interesting.
-                        // Known, uninteresting things (from error level logs perspective)
-                        // that trigger this error:
-                        // - In the case where user closes browser tab, we get a connection error
-                        //   if a message was still in progress of being sent.
-                        // - If the user agent is sends just `GET /` without specifying HTTP version,
-                        //   as they used to do for what we now sometimes refer to as HTTP/0.9,
-                        //   we get an "invalid URI" error.
-                        //   Conversely:
-                        //   * A client that sends `GET / HTTP/1.1` gets a HTTP/1.1 response
-                        //     as one would expect.
-                        //   * A client that sends `GET / HTTP/1.0` gets a HTTP/1.0 response
-                        //     as one might expect.
-                        // TODO: Any cases that would warrant logging this at level error?
-                        debug!(err = e, "Connection error");
-                    }
-                    debug!(?peer_addr, "Connection dropped");
-                });
-                spawned_tasks.push(task);
-            },
+            }
+        });
 
-            _ = ctrl_c.recv().fuse() => {
-                drop(project_tcp);
-                drop(status_tcp);
-                info!("Ctrl-C received, starting shutdown");
-                break;
+        let server =
+            hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
+        let graceful = hyper_util::server::graceful::GracefulShutdown::new();
+
+        info!("Starting status and project servers.");
+        // Skip printing hints if we are going to attempt to open the web browser for the user.
+        if !args.open {
+            info!("Access your project through the http-horse status user interface.");
+            info!(
+                status_url,
+                "http-horse status user interface is accessible at <{status_url}>."
+            );
+        }
+
+        // Attempt to open web browser for the user if they supplied the flag for doing so.
+        // If we fail to open any of the URLs, print corresponding error and instruct the user
+        // to manually open each of the URLs that we failed to open for them.
+        // These errors are considered non-fatal, and program execution continues.
+        if args.open {
+            info!("Attempting to open http-horse status page in web browser.");
+            if let Err(e) = opener::open(status_url) {
+                error!(?e, "Failed to open http-horse status page in web browser.");
+                info!(status_url, "To view the http-horse status user interface, please open the following URL manually in a web browser: <{status_url}>.");
+            }
+            info!("Attempting to open served project in web browser.");
+            if let Err(e) = opener::open(project_url) {
+                error!(?e, "Failed to open served project in web browser.");
+                info!(project_url, "To view your served project, please open the following URL manually in a web browser: <{project_url}>.");
             }
         }
-    }
 
-    info!("Shutting down FS event observer thread for project out dir.");
-    drop(project_out_fs_event_observer_handle);
+        let mut spawned_tasks = vec![];
 
-    info!("Shutting down FS event transformer thread for project out dir.");
-    drop(project_out_fs_event_transformer_handle);
+        // XXX: https://github.com/hyperium/hyper-util/blob/df55abac42d0cc1e1577f771d8a1fc91f4bcd0dd/examples/server_graceful.rs
+        loop {
+            select! {
+                /*
+                 * TODO: Enable TCP_NODELAY for accepted connections.
+                 *
+                 * XXX: For details about TCP_NODELAY, see
+                 *      https://github.com/hyperium/hyper/issues/1997
+                 *      https://en.wikipedia.org/wiki/Nagle%27s_algorithm
+                 *      https://www.extrahop.com/company/blog/2016/tcp-nodelay-nagle-quickack-best-practices/
+                 */
 
-    Ok(())
+                /*
+                 * Serving of files for the project that the user is working on.
+                 */
+                project_conn = project_tcp.accept().fuse() => {
+                    let (stream, peer_addr) = match project_conn {
+                        Ok(conn) => conn,
+                        Err(e) => {
+                            error!(err = ?e, "Accept error");
+                            Timer::after(Duration::from_secs(1)).await;
+                            continue;
+                        }
+                    };
+                    debug!(?peer_addr, "Incoming connection accepted on project_tcp");
+                    let stream = FuturesIo::new(stream);
+                    let conn = server.serve_connection_with_upgrades(stream, service_fn(request_handler_project));
+                    let conn = graceful.watch(conn.into_owned());
+                    let task = ex.spawn(async move {
+                        debug!("Spawned task for connection on connection from project_tcp.");
+                        if let Err(e) = conn.await {
+                            // We log this error at debug level because it is usually not interesting.
+                            // Known, uninteresting things (from error level logs perspective)
+                            // that trigger this error:
+                            // - In the case where user closes browser tab, we get a connection error
+                            //   if a message was still in progress of being sent.
+                            // - If the user agent is sends just `GET /` without specifying HTTP version,
+                            //   as they used to do for what we now sometimes refer to as HTTP/0.9,
+                            //   we get an "invalid URI" error.
+                            //   Conversely:
+                            //   * A client that sends `GET / HTTP/1.1` gets a HTTP/1.1 response
+                            //     as one would expect.
+                            //   * A client that sends `GET / HTTP/1.0` gets a HTTP/1.0 response
+                            //     as one might expect.
+                            // TODO: Any cases that would warrant logging this at level error?
+                            debug!(err = e, "Connection error");
+                        }
+                        debug!(?peer_addr, "Connection dropped");
+                    });
+                    spawned_tasks.push(task);
+                },
+
+                /*
+                 * Serving of status pages, showing status and history.
+                 */
+                status_conn = status_tcp.accept().fuse() => {
+                    let (stream, peer_addr) = match status_conn {
+                        Ok(conn) => conn,
+                        Err(e) => {
+                            error!(err = ?e, "Accept error");
+                            Timer::after(Duration::from_secs(1)).await;
+                            continue;
+                        }
+                    };
+                    debug!(?peer_addr, "Incoming connection accepted on status_tcp");
+                    let stream = FuturesIo::new(stream);
+                    let conn = server.serve_connection_with_upgrades(stream, service_fn(request_handler_status));
+                    let conn = graceful.watch(conn.into_owned());
+                    let task = ex.spawn(async move {
+                        debug!("Spawned task for connection on connection from status_tcp.");
+                        if let Err(e) = conn.await {
+                            // We log this error at debug level because it is usually not interesting.
+                            // Known, uninteresting things (from error level logs perspective)
+                            // that trigger this error:
+                            // - In the case where user closes browser tab, we get a connection error
+                            //   if a message was still in progress of being sent.
+                            // - If the user agent is sends just `GET /` without specifying HTTP version,
+                            //   as they used to do for what we now sometimes refer to as HTTP/0.9,
+                            //   we get an "invalid URI" error.
+                            //   Conversely:
+                            //   * A client that sends `GET / HTTP/1.1` gets a HTTP/1.1 response
+                            //     as one would expect.
+                            //   * A client that sends `GET / HTTP/1.0` gets a HTTP/1.0 response
+                            //     as one might expect.
+                            // TODO: Any cases that would warrant logging this at level error?
+                            debug!(err = e, "Connection error");
+                        }
+                        debug!(?peer_addr, "Connection dropped");
+                    });
+                    spawned_tasks.push(task);
+                },
+
+                _ = ctrl_c.recv().fuse() => {
+                    drop(project_tcp);
+                    drop(status_tcp);
+                    info!("Ctrl-C received, starting shutdown");
+                    break;
+                }
+            }
+        }
+
+        info!("Shutting down FS event observer thread for project out dir.");
+        drop(project_out_fs_event_observer_handle);
+
+        info!("Shutting down FS event transformer thread for project out dir.");
+        drop(project_out_fs_event_transformer_handle);
+
+        Ok(())
+    }))
 }
 
 #[derive(Error, Debug)]
