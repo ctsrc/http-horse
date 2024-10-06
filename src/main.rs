@@ -3,8 +3,12 @@ use askama::Template;
 use async_stream::stream;
 use bytes::Bytes;
 use clap::{crate_version, Parser, ValueEnum};
-use futures_util::TryStreamExt;
+use futures_util::{select, FutureExt, TryStreamExt};
 use http_body_util::{combinators::BoxBody, BodyExt, Either, Full, StreamBody};
+use http_horse::fs::{
+    exclude::{exclude, EXCLUDE_FILES_BY_NAME},
+    scan_project_dir::scan_project_dir,
+};
 use hyper::{
     body::{Frame, Incoming},
     header,
@@ -13,8 +17,12 @@ use hyper::{
     service::service_fn,
     Method, Request, Response, StatusCode,
 };
-use hyper_util::rt::TokioIo;
+use macro_rules_attribute::apply;
 use serde::{Deserialize, Serialize};
+use smol::stream::StreamExt;
+use smol::{fs::File, io::AsyncReadExt, net::TcpListener, Timer};
+use smol_hyper::rt::{FuturesIo, SmolExecutor, SmolTimer};
+use smol_macros::{main, Executor};
 use std::{
     io::ErrorKind,
     net::{IpAddr, SocketAddr},
@@ -24,8 +32,6 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
-use tokio::{fs::File, net::TcpListener};
-use tokio_util::io::ReaderStream;
 use tracing::{debug, error, info, warn};
 
 #[derive(Template)]
@@ -110,10 +116,20 @@ enum ColorScheme {
 
 static PROJECT_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // install global collector configured based on RUST_LOG env var.
+#[apply(main!)]
+async fn main(ex: &Executor<'_>) -> anyhow::Result<()> {
+    // Install global collector configured based on RUST_LOG env var.
     tracing_subscriber::fmt::init();
+
+    // Ctrl-C handler
+    let (s, ctrl_c) = smol::channel::bounded(100);
+    ctrlc::set_handler(move || {
+        s.try_send(())
+            .inspect_err(|e| error!(err = ?e, "Ctrl-C handler failed to send to channel."))
+            .ok();
+    })
+    .inspect_err(|e| error!(err = ?e, "Failed to set Ctrl-C handler"))
+    .with_context(|| "Failed to set Ctrl-C handler.")?;
 
     info!("Starting http-horse v{}", crate_version!());
 
@@ -141,6 +157,13 @@ async fn main() -> anyhow::Result<()> {
         .set(project_dir.clone())
         .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
         .map_err(|_| anyhow!("Failed to set value of OnceLock."))?;
+
+    EXCLUDE_FILES_BY_NAME
+        .set(exclude())
+        .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
+        .map_err(|_| anyhow!("Failed to set value of OnceLock."))?;
+
+    let project_files = ex.spawn(scan_project_dir(project_dir.clone())).await?;
 
     // FsEvent takes strings as arguments. We always want to use the canonical path,
     // and because of that we have to convert back to String from PathBuf.
@@ -259,7 +282,7 @@ async fn main() -> anyhow::Result<()> {
         std::thread::sleep(Duration::from_millis(15));
         // TODO: Create initial temp file in project dir
         // TODO: Start a timer so we can check how long has passed since we created initial temp file.
-        // TODO: Initial scan of project dir
+        // TODO: Integrate with initial scan of project dir
         'skip_up_to_temp_file: loop {
             match project_out_fs_event_rx.recv() {
                 Ok(fs_ev) => {
@@ -316,7 +339,6 @@ async fn main() -> anyhow::Result<()> {
 
     let server = hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new());
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
-    let mut ctrl_c = pin!(tokio::signal::ctrl_c());
 
     info!("Starting status and project servers.");
     // Skip printing hints if we are going to attempt to open the web browser for the user.
@@ -345,9 +367,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    let mut spawned_tasks = vec![];
+
     // XXX: https://github.com/hyperium/hyper-util/blob/df55abac42d0cc1e1577f771d8a1fc91f4bcd0dd/examples/server_graceful.rs
     loop {
-        tokio::select! {
+        select! {
             /*
              * TODO: Enable TCP_NODELAY for accepted connections.
              *
@@ -360,20 +384,21 @@ async fn main() -> anyhow::Result<()> {
             /*
              * Serving of files for the project that the user is working on.
              */
-            project_conn = project_tcp.accept() => {
+            project_conn = project_tcp.accept().fuse() => {
                 let (stream, peer_addr) = match project_conn {
                     Ok(conn) => conn,
                     Err(e) => {
                         error!(err = ?e, "Accept error");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        Timer::after(Duration::from_secs(1)).await;
                         continue;
                     }
                 };
-                debug!(?peer_addr, "Incoming connection accepted");
-                let stream = TokioIo::new(Box::pin(stream));
+                debug!(?peer_addr, "Incoming connection accepted on project_tcp");
+                let stream = FuturesIo::new(stream);
                 let conn = server.serve_connection_with_upgrades(stream, service_fn(request_handler_project));
                 let conn = graceful.watch(conn.into_owned());
-                tokio::spawn(async move {
+                let task = ex.spawn(async move {
+                    debug!("Spawned task for connection on connection from project_tcp.");
                     if let Err(e) = conn.await {
                         // We log this error at debug level because it is usually not interesting.
                         // Known, uninteresting things (from error level logs perspective)
@@ -393,25 +418,27 @@ async fn main() -> anyhow::Result<()> {
                     }
                     debug!(?peer_addr, "Connection dropped");
                 });
+                spawned_tasks.push(task);
             },
 
             /*
              * Serving of status pages, showing status and history.
              */
-            status_conn = status_tcp.accept() => {
+            status_conn = status_tcp.accept().fuse() => {
                 let (stream, peer_addr) = match status_conn {
                     Ok(conn) => conn,
                     Err(e) => {
                         error!(err = ?e, "Accept error");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        Timer::after(Duration::from_secs(1)).await;
                         continue;
                     }
                 };
-                debug!(?peer_addr, "Incoming connection accepted");
-                let stream = TokioIo::new(Box::pin(stream));
+                debug!(?peer_addr, "Incoming connection accepted on status_tcp");
+                let stream = FuturesIo::new(stream);
                 let conn = server.serve_connection_with_upgrades(stream, service_fn(request_handler_status));
                 let conn = graceful.watch(conn.into_owned());
-                tokio::spawn(async move {
+                let task = ex.spawn(async move {
+                    debug!("Spawned task for connection on connection from status_tcp.");
                     if let Err(e) = conn.await {
                         // We log this error at debug level because it is usually not interesting.
                         // Known, uninteresting things (from error level logs perspective)
@@ -431,9 +458,10 @@ async fn main() -> anyhow::Result<()> {
                     }
                     debug!(?peer_addr, "Connection dropped");
                 });
+                spawned_tasks.push(task);
             },
 
-            _ = ctrl_c.as_mut() => {
+            _ = ctrl_c.recv().fuse() => {
                 drop(project_tcp);
                 drop(status_tcp);
                 info!("Ctrl-C received, starting shutdown");
@@ -461,7 +489,7 @@ fn event_stream() -> BoxBody<Bytes, FSEventObserverDisconnectedError> {
         let mut i = 0;
         loop {
             // Sleep 250ms between each iteration so we don't overwhelm the web page with events.
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            Timer::after(Duration::from_millis(250)).await;
             yield Ok(Bytes::from(format!("data: {{\"elem\": {i}}}\n\n")));
             i += 1;
         }
@@ -692,6 +720,8 @@ async fn handle_dir_request<P: AsRef<Path>>(
     req_path_checked: P,
     response_builder: ResponseBuilder,
 ) -> HttpResult<Response<Either<Full<Bytes>, BoxBody<Bytes, std::io::Error>>>> {
+    // TODO: How to stream file with hyper, now that we use smol instead of tokio?
+    /*
     // 1. Try file "index.htm"
     if let Ok(file) = File::open(req_path_checked.as_ref().join("index.htm")).await {
         // Based on <https://github.com/hyperium/hyper/blob/4c84e8c1c26a1464221de96b9f39816ce7251a5f/examples/send_file.rs#L81C1-L82C42>
@@ -708,6 +738,7 @@ async fn handle_dir_request<P: AsRef<Path>>(
         let boxed_body = BodyExt::boxed(stream_body);
         return response_builder.body(Either::Right(boxed_body));
     }
+     */
     // 3. Return a directory listing. (Note: This one needs to update itself as well.)
     // TODO: dir listing
     let (status, content_type, body) = not_found();
