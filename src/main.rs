@@ -116,7 +116,7 @@ enum ColorScheme {
 
 static PROJECT_DIR: OnceLock<PathBuf> = OnceLock::new();
 
-/// Values from synchronous parts of program setup.
+/// Values from synchronous portion of program setup.
 struct SynchronousSetupValues {
     ctrl_c: smol::channel::Receiver<()>,
     project_dir: PathBuf,
