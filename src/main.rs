@@ -23,6 +23,7 @@ use smol::stream::StreamExt;
 use smol::{fs::File, io::AsyncReadExt, net::TcpListener, Timer};
 use smol_hyper::rt::{FuturesIo, SmolExecutor, SmolTimer};
 use smol_macros::{main, Executor};
+use std::sync::{Arc, Barrier};
 use std::time::Instant;
 use std::{
     io::ErrorKind,
@@ -191,6 +192,93 @@ async fn main(ex: &Executor<'_>) -> anyhow::Result<()> {
         })?;
     }
 
+    // FsEvent takes strings as arguments. We always want to use the canonical path,
+    // and because of that we have to convert back to String from PathBuf.
+    let pdir = project_dir
+        .clone()
+        .into_os_string()
+        .into_string()
+        .inspect_err(|e| error!(os_string = ?e, "Fatal: Failed to convert PathBuf to String."))
+        .map_err(|_| anyhow!("Failed to convert PathBuf to String."))?;
+
+    /*
+     * We monitor FS events in the project dir using the
+     * Apple File System Events API via the fsevent crate.
+     *
+     * XXX: Hardlink creation does not result in any corresponding event.
+     *      Issue for this filed at https://github.com/octplane/fsevent-rust/issues/27
+     *
+     * XXX: When files are moved, two events are generated. One for the source file path,
+     *      and one for the target file path. Because we are choosing to subscribe to events
+     *      for the project directory only, we don't see "the other half" of a pair of events
+     *      where a file is moved into or out of the project directory. Now, we could of course
+     *      monitor the whole file system, and do our best to correlate all moves that affect us.
+     *      But really, that's a lot of work for little actual benefit.
+     *
+     *      So what we are going to do is, anytime a file or directory is moved into, within, or out
+     *      of the project directory, we create a temporary file, recursively rescan the project
+     *      directory and "fast-forward" to the point in the stream where we see the creation of
+     *      our temporary file. We do that same temporary file thing for the initial scan as well.
+     *
+     *      And if you think it's weird to do it that way, keep in mind that:
+     *
+     *        1. The information provided by the FSE API is only advisory anyway, and
+     *
+     *        2. Our use-case revolves mainly around files being written to most of the
+     *           time, and sometimes being created or deleted, and normally not being moved.
+     *           So, whereas in contexts where there is a lot of moving going on it might
+     *           not make so much sense to do it like this, it does in our case and also
+     *           helps keep the picture that we have of our project dir over time robust
+     *           (i.e. correctly corresponding to actual reality).
+     *
+     *      So all in all this is actually a good solution we have here, I think.
+     */
+
+    let (project_out_fs_event_tx, project_out_fs_event_rx) = std::sync::mpsc::channel();
+    let barrier = Arc::new(Barrier::new(2));
+
+    let project_out_fs_event_observer_handle = {
+        let pdir = pdir.clone();
+        let barrier = barrier.clone();
+        std::thread::spawn(move || {
+            let span = info_span!("FS event observer thread");
+            span.in_scope(|| {
+                debug!("FS event observer thread started.");
+                let project_out_fs_observer = fsevent::FsEvent::new(vec![pdir]);
+
+                // Rendezvous with main thread, so that main thread will wait before proceeding to create marker tempfile A.
+                debug!("About to rendezvous with main thread");
+                barrier.wait();
+
+                project_out_fs_observer.observe(project_out_fs_event_tx);
+                // Log at warn level so that we can spot in logs if FS observer thread stops before we expect it to.
+                warn!("FS event observer thread stopping.");
+            })
+        })
+    };
+
+    // Create a unique temporary file in project dir, that we will use for figuring out
+    // what to do with events occurring around the time between the start and end
+    // of our initial full scan of the project directory.
+    let tmpfile_marker_a = {
+        let span = info_span!("Create marker tempfile A");
+
+        span.in_scope(|| {
+            // Rendezvous with FS observer thread, so that main thread will wait before proceeding to create marker tempfile A.
+            debug!("About to rendezvous with FS observer thread");
+            barrier.wait();
+
+            // Sleep a little bit extra, to give time for FS observer in FS observer thread to have started.
+            debug!("Initiating brief sleep for main thread");
+            std::thread::sleep(Duration::from_millis(250));
+
+            let tmpfile_marker_a = tempfile::tempfile_in(&project_dir)
+                .inspect_err(|e| error!(err = ?e, "Failed to create temporary file."))?;
+            debug!(?tmpfile_marker_a, "Created marker tempfile A.");
+            Ok::<_, std::io::Error>(tmpfile_marker_a)
+        })
+    }?;
+
     let project_dir_tree = {
         let span = info_span!("Initial full scan of project directory");
         let instant_start_scan = Instant::now();
@@ -207,14 +295,6 @@ async fn main(ex: &Executor<'_>) -> anyhow::Result<()> {
             project_dir_tree
         })
     };
-
-    // FsEvent takes strings as arguments. We always want to use the canonical path,
-    // and because of that we have to convert back to String from PathBuf.
-    let pdir = project_dir
-        .into_os_string()
-        .into_string()
-        .inspect_err(|e| error!(os_string = ?e, "Fatal: Failed to convert PathBuf to String."))
-        .map_err(|_| anyhow!("Failed to convert PathBuf to String."))?;
 
     let internal_index_page = StatusWebUiIndex {
         project_dir: &pdir,
@@ -280,46 +360,6 @@ async fn main(ex: &Executor<'_>) -> anyhow::Result<()> {
         project_url,
         "Project pages will be served on <{project_url}>."
     );
-
-    /*
-     * We monitor FS events in the project dir using the
-     * Apple File System Events API via the fsevent crate.
-     *
-     * XXX: Hardlink creation does not result in any corresponding event.
-     *      Issue for this filed at https://github.com/octplane/fsevent-rust/issues/27
-     *
-     * XXX: When files are moved, two events are generated. One for the source file path,
-     *      and one for the target file path. Because we are choosing to subscribe to events
-     *      for the project directory only, we don't see "the other half" of a pair of events
-     *      where a file is moved into or out of the project directory. Now, we could of course
-     *      monitor the whole file system, and do our best to correlate all moves that affect us.
-     *      But really, that's a lot of work for little actual benefit.
-     *
-     *      So what we are going to do is, anytime a file or directory is moved into, within, or out
-     *      of the project directory, we create a temporary file, recursively rescan the project
-     *      directory and "fast-forward" to the point in the stream where we see the creation of
-     *      our temporary file. We do that same temporary file thing for the initial scan as well.
-     *
-     *      And if you think it's weird to do it that way, keep in mind that:
-     *
-     *        1. The information provided by the FSE API is only advisory anyway, and
-     *
-     *        2. Our use-case revolves mainly around files being written to most of the
-     *           time, and sometimes being created or deleted, and normally not being moved.
-     *           So, whereas in contexts where there is a lot of moving going on it might
-     *           not make so much sense to do it like this, it does in our case and also
-     *           helps keep the picture that we have of our project dir over time robust
-     *           (i.e. correctly corresponding to actual reality).
-     *
-     *      So all in all this is actually a good solution we have here, I think.
-     */
-
-    let (project_out_fs_event_tx, project_out_fs_event_rx) = std::sync::mpsc::channel();
-
-    let project_out_fs_event_observer_handle = std::thread::spawn(move || {
-        let project_out_fs_observer = fsevent::FsEvent::new(vec![pdir]);
-        project_out_fs_observer.observe(project_out_fs_event_tx);
-    });
 
     let project_out_fs_event_transformer_handle = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(15));
