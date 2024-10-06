@@ -311,6 +311,11 @@ fn main() -> anyhow::Result<()> {
                     barrier.wait();
 
                     // Sleep a little bit extra, to give time for FS observer in FS observer thread to have started.
+                    // Because the FS observer is a third-party crate, we don't have the ability to set a barrier
+                    // exactly where the FS observer has actually started observing FS events.
+                    // Therefore, we have this little sleep to help us increase the likelihood of the FS observer having
+                    // started to observe FS events, so that in turn the file creation we are about to do from here
+                    // will be seen by the FS observer.
                     debug!("Initiating brief sleep for main thread");
                     std::thread::sleep(Duration::from_millis(250));
 
