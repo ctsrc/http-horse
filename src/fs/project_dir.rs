@@ -1,4 +1,7 @@
-//! Scan project dir
+//! http-horse operates on a "project directory", provided via command-line arguments.
+//! The project directory is the user-provided directory containing the built files
+//! which will be served by the http-horse web server, and which will be watched
+//! for changes by http-horse.
 
 use crate::fs::exclude::EXCLUDE_FILES_BY_NAME;
 use futures_util::future::join_all;
