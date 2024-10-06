@@ -33,7 +33,7 @@ use std::{
     time::Duration,
 };
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 
 #[derive(Template)]
 #[template(path = "status-webui/index.htm")]
@@ -123,52 +123,90 @@ async fn main(ex: &Executor<'_>) -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     // Ctrl-C handler
-    let (s, ctrl_c) = smol::channel::bounded(100);
-    ctrlc::set_handler(move || {
-        s.try_send(())
-            .inspect_err(|e| error!(err = ?e, "Ctrl-C handler failed to send to channel."))
-            .ok();
-    })
-    .inspect_err(|e| error!(err = ?e, "Failed to set Ctrl-C handler"))
-    .with_context(|| "Failed to set Ctrl-C handler.")?;
+    let ctrl_c = {
+        let span = info_span!("Ctrl-C handler setup");
+        span.in_scope(|| {
+            let (s, ctrl_c) = smol::channel::bounded(100);
+            ctrlc::set_handler(move || {
+                s.try_send(())
+                    .inspect_err(|e| error!(err = ?e, "Ctrl-C handler failed to send to channel."))
+                    .ok();
+            })
+            .inspect_err(|e| error!(err = ?e, "Fatal: Ctrl-C handler setup failed."))
+            .with_context(|| "Ctrl-C handler setup failed.")?;
+            debug!("Ctrl-C handler setup finished successfully.");
+            Ok::<_, anyhow::Error>(ctrl_c)
+        })
+    }?;
 
     info!("Starting http-horse v{}", crate_version!());
 
-    let args = Cli::parse();
+    let args = {
+        let span = info_span!("Command-line argument parsing");
+        span.in_scope(|| {
+            let args = Cli::parse();
+            debug!("Finished parsing command-line arguments");
+            args
+        })
+    };
 
-    let project_dir = PathBuf::from(args.dir);
-    let project_dir = project_dir
-        .canonicalize()
-        .inspect_err(
-            |e| error!(err = ?e, ?project_dir, "Fatal: Failed to canonicalize project dir path."),
-        )
-        .with_context(|| format!("Failed to canonicalize project dir path: {project_dir:?}"))?;
+    let project_dir = {
+        let span = info_span!("Project directory path canonicalization");
+        span.in_scope(|| {
+            let project_dir = PathBuf::from(args.dir);
+            let project_dir = project_dir
+                .canonicalize()
+                .inspect_err(
+                    |e| error!(err = ?e, ?project_dir, "Fatal: Failed to canonicalize project dir path."),
+                )
+                .with_context(|| format!("Failed to canonicalize project dir path: {project_dir:?}"))?;
 
-    if !project_dir.is_dir() {
-        error!(
-            ?project_dir,
-            "Fatal: File is not a directory: Project dir path."
-        );
-        return Err(anyhow!(
-            "File is not a directory: Project dir path: {project_dir:?}"
-        ));
+            if !project_dir.is_dir() {
+                error!(?project_dir, "Fatal: File is not a directory: Project dir path.");
+                Err(anyhow!("File is not a directory: Project dir path: {project_dir:?}"))
+            } else {
+                debug!(?project_dir, "Successfully canonicalized project dir path.");
+                Ok(project_dir)
+            }
+        })
+    }?;
+
+    {
+        let span = info_span!("Initialization of OnceLock holding project directory path");
+        span.in_scope(|| {
+            PROJECT_DIR
+                .set(project_dir.clone())
+                .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
+                .map_err(|_| anyhow!("Failed to set value of OnceLock."))
+        })?;
     }
 
-    PROJECT_DIR
-        .set(project_dir.clone())
-        .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
-        .map_err(|_| anyhow!("Failed to set value of OnceLock."))?;
+    {
+        let span = info_span!("Initialization of OnceLock holding file names to exclude");
+        span.in_scope(|| {
+            EXCLUDE_FILES_BY_NAME
+                .set(exclude())
+                .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
+                .map_err(|_| anyhow!("Failed to set value of OnceLock."))
+        })?;
+    }
 
-    EXCLUDE_FILES_BY_NAME
-        .set(exclude())
-        .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
-        .map_err(|_| anyhow!("Failed to set value of OnceLock."))?;
-
-    let instant_start_scan = Instant::now();
-    let project_dir_tree = ex.spawn(scan_project_dir(project_dir.clone())).await?;
-    let t_spent_scanning = Instant::now() - instant_start_scan;
-    info!(?t_spent_scanning, "Finished initial scan of project dir.");
-    debug!(?project_dir_tree, "Project dir tree.");
+    let project_dir_tree = {
+        let span = info_span!("Initial full scan of project directory");
+        let instant_start_scan = Instant::now();
+        let project_dir_tree = ex
+            .spawn(scan_project_dir(project_dir.clone()).instrument(span.clone()))
+            .await?;
+        let t_spent_scanning = Instant::now() - instant_start_scan;
+        span.in_scope(|| {
+            info!(
+                ?t_spent_scanning,
+                "Finished initial full scan of project directory."
+            );
+            trace!(?project_dir_tree, "Project dir tree.");
+            project_dir_tree
+        })
+    };
 
     // FsEvent takes strings as arguments. We always want to use the canonical path,
     // and because of that we have to convert back to String from PathBuf.
