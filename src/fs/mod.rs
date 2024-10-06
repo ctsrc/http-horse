@@ -1,2 +1,2 @@
 pub mod exclude;
-pub mod scan_project_dir;
+pub mod project_dir;

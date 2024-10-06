@@ -2,7 +2,7 @@
 
 use crate::fs::exclude::EXCLUDE_FILES_BY_NAME;
 use futures_util::future::join_all;
-use smol::fs::read_dir;
+use smol::fs::{read_dir, File};
 use smol::stream::StreamExt;
 use std::fmt::Debug;
 use std::os::unix::ffi::OsStrExt;
@@ -28,7 +28,7 @@ static I_HAVE_ALREADY_BEEN_RUN: OnceLock<bool> = OnceLock::new();
 ///
 /// Subsequent calls to this function should not be made. For staying up to date
 /// with file system changes, file system event monitoring should be used.
-pub async fn scan_project_dir(project_dir: PathBuf) -> Result<(), Error> {
+pub async fn scan_project_dir(project_dir: PathBuf) -> Result<TrackedProjectDir, Error> {
     let exclude = EXCLUDE_FILES_BY_NAME
         .get()
         .ok_or(Error::ExcludeRulesNotInitialized)?;
@@ -41,22 +41,46 @@ pub async fn scan_project_dir(project_dir: PathBuf) -> Result<(), Error> {
     scan_dir(project_dir, exclude).await
 }
 
-async fn scan_dir(dir: PathBuf, exclude: &TrieHard<'static, &str>) -> Result<(), Error> {
-    info!(?dir, "Scanning directory");
+/// A regular file that we are tracking updates and changes for,
+/// from the project directory tree.
+#[derive(Debug)]
+pub struct TrackedProjectFile {
+    /// Absolute path to file.
+    pub fpath: PathBuf,
+    /// Open file handle.
+    pub file: File,
+}
 
-    let mut read_dir = read_dir(&dir).await?;
+/// A directory that we are tracking updates and changes for,
+/// from the project directory tree.
+#[derive(Debug)]
+pub struct TrackedProjectDir {
+    /// Regular files in this directory.
+    pub tracked_files: Vec<TrackedProjectFile>,
+    /// Subdirectories in this directory.
+    pub tracked_dirs: Vec<TrackedProjectDir>,
+}
 
-    //let mut files = vec![];
+async fn scan_dir(
+    dpath: PathBuf,
+    exclude: &TrieHard<'static, &str>,
+) -> Result<TrackedProjectDir, Error> {
+    info!(?dpath, "Scanning directory");
+
+    let mut read_dir = read_dir(&dpath).await?;
+
+    let mut tracked_files = vec![];
+    //let mut dirs = vec![];
 
     let mut subdir_futs = vec![];
 
     while let Some(dir_entry) = read_dir.try_next().await? {
         let file_name = dir_entry.file_name();
-        debug!(?file_name, ?dir, "A dir entry was read from directory.");
+        debug!(?file_name, ?dpath, "A dir entry was read from directory.");
         if let Some(matched) = exclude.get(dir_entry.file_name().as_bytes()) {
             info!(
                 file_name = matched,
-                ?dir,
+                ?dpath,
                 "Skipping file based on exclusion rules."
             );
             continue;
@@ -89,19 +113,30 @@ async fn scan_dir(dir: PathBuf, exclude: &TrieHard<'static, &str>) -> Result<(),
         // TODO: ^
         let file_type = dir_entry.file_type().await?;
         if file_type.is_symlink() {
-            info!(?file_name, ?dir, "Skipping file because it is a symlink.");
+            info!(?file_name, ?dpath, "Skipping file because it is a symlink.");
             continue;
-        }
-
-        if file_type.is_dir() {
-            let mut child_dir = dir.clone();
-            child_dir.push(file_name);
-            subdir_futs.push(scan_dir(child_dir, exclude));
+        } else if file_type.is_dir() {
+            let mut child_dpath = dpath.clone();
+            child_dpath.push(file_name);
+            subdir_futs.push(scan_dir(child_dpath, exclude));
+        } else if file_type.is_file() {
+            let mut fpath = dpath.clone();
+            fpath.push(file_name);
+            let file = File::open(&fpath).await?;
+            let tracked_file = TrackedProjectFile { fpath, file };
+            tracked_files.push(tracked_file);
+        } else {
+            unreachable!("The only three kinds of file type we know of is directory, symlink and regular file.");
         }
     }
 
     let res: Result<Vec<_>, _> = join_all(subdir_futs).await.into_iter().collect();
-    res?;
+    let tracked_dirs = res?;
 
-    Ok(())
+    let tracked_dir = TrackedProjectDir {
+        tracked_files,
+        tracked_dirs,
+    };
+
+    Ok(tracked_dir)
 }

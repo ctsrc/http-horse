@@ -7,7 +7,7 @@ use futures_util::{select, FutureExt, TryStreamExt};
 use http_body_util::{combinators::BoxBody, BodyExt, Either, Full, StreamBody};
 use http_horse::fs::{
     exclude::{exclude, EXCLUDE_FILES_BY_NAME},
-    scan_project_dir::scan_project_dir,
+    project_dir::scan_project_dir,
 };
 use hyper::{
     body::{Frame, Incoming},
@@ -23,6 +23,7 @@ use smol::stream::StreamExt;
 use smol::{fs::File, io::AsyncReadExt, net::TcpListener, Timer};
 use smol_hyper::rt::{FuturesIo, SmolExecutor, SmolTimer};
 use smol_macros::{main, Executor};
+use std::time::Instant;
 use std::{
     io::ErrorKind,
     net::{IpAddr, SocketAddr},
@@ -163,7 +164,11 @@ async fn main(ex: &Executor<'_>) -> anyhow::Result<()> {
         .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
         .map_err(|_| anyhow!("Failed to set value of OnceLock."))?;
 
-    let project_files = ex.spawn(scan_project_dir(project_dir.clone())).await?;
+    let instant_start_scan = Instant::now();
+    let project_dir_tree = ex.spawn(scan_project_dir(project_dir.clone())).await?;
+    let t_spent_scanning = Instant::now() - instant_start_scan;
+    info!(?t_spent_scanning, "Finished initial scan of project dir.");
+    debug!(?project_dir_tree, "Project dir tree.");
 
     // FsEvent takes strings as arguments. We always want to use the canonical path,
     // and because of that we have to convert back to String from PathBuf.
