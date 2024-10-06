@@ -116,6 +116,17 @@ enum ColorScheme {
 
 static PROJECT_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+/// Values from synchronous parts of program setup.
+struct SynchronousSetupValues {
+    ctrl_c: smol::channel::Receiver<()>,
+    project_dir: PathBuf,
+    open_pages_in_browser: bool,
+    status_addr: SocketAddr,
+    project_addr: SocketAddr,
+    project_out_fs_event_rx: std::sync::mpsc::Receiver<fsevent::Event>,
+    project_out_fs_event_observer_handle: std::thread::JoinHandle<()>,
+}
+
 /// This `main` function is part synchronous and part async.
 /// Up to a certain point of the program start up, everything that we need to happen is synchronous.
 /// And after that it's a mixture of synchronous and async things.
@@ -125,185 +136,235 @@ fn main() -> anyhow::Result<()> {
     /*
      * Synchronous parts of setup from this point and up until the block comment about start of async.
      */
+    let synchronous_setup = {
+        let t_start_synchronous_setup = Instant::now();
 
-    // Install global collector configured based on RUST_LOG env var.
-    tracing_subscriber::fmt::init();
+        // Install global collector configured based on RUST_LOG env var.
+        tracing_subscriber::fmt::init();
 
-    // Ctrl-C handler
-    let ctrl_c = {
-        let span = info_span!("Ctrl-C handler setup");
-        span.in_scope(|| {
-            let (s, ctrl_c) = smol::channel::bounded(100);
-            ctrlc::set_handler(move || {
-                s.try_send(())
-                    .inspect_err(|e| error!(err = ?e, "Ctrl-C handler failed to send to channel."))
-                    .ok();
-            })
-            .inspect_err(|e| error!(err = ?e, "Fatal: Ctrl-C handler setup failed."))
-            .with_context(|| "Ctrl-C handler setup failed.")?;
-            debug!("Ctrl-C handler setup finished successfully.");
-            Ok::<_, anyhow::Error>(ctrl_c)
-        })
-    }?;
+        let outer_span_for_synchronous_setup_portion =
+            info_span!("Synchronous portion of program setup");
 
-    info!("Starting http-horse v{}", crate_version!());
+        outer_span_for_synchronous_setup_portion.in_scope(|| {
+            // Ctrl-C handler
+            let ctrl_c = {
+                let span = info_span!("Ctrl-C handler setup");
+                span.in_scope(|| {
+                    let (s, ctrl_c) = smol::channel::bounded(100);
+                    ctrlc::set_handler(move || {
+                        s.try_send(())
+                            .inspect_err(
+                                |e| error!(err = ?e, "Ctrl-C handler failed to send to channel."),
+                            )
+                            .ok();
+                    })
+                        .inspect_err(|e| error!(err = ?e, "Fatal: Ctrl-C handler setup failed."))
+                        .with_context(|| "Ctrl-C handler setup failed.")?;
+                    debug!("Ctrl-C handler setup finished successfully.");
+                    Ok::<_, anyhow::Error>(ctrl_c)
+                })
+            }?;
 
-    let args = {
-        let span = info_span!("Command-line argument parsing");
-        span.in_scope(|| {
-            let args = Cli::parse();
-            debug!("Finished parsing command-line arguments");
-            args
-        })
-    };
+            info!("Starting http-horse v{}", crate_version!());
 
-    let project_dir = {
-        let span = info_span!("Project directory path canonicalization");
-        span.in_scope(|| {
-            let project_dir = PathBuf::from(args.dir);
-            let project_dir = project_dir
-                .canonicalize()
-                .inspect_err(
-                    |e| error!(err = ?e, ?project_dir, "Fatal: Failed to canonicalize project dir path."),
-                )
-                .with_context(|| format!("Failed to canonicalize project dir path: {project_dir:?}"))?;
-
-            if !project_dir.is_dir() {
-                error!(?project_dir, "Fatal: File is not a directory: Project dir path.");
-                Err(anyhow!("File is not a directory: Project dir path: {project_dir:?}"))
-            } else {
-                debug!(?project_dir, "Successfully canonicalized project dir path.");
-                Ok(project_dir)
-            }
-        })
-    }?;
-
-    {
-        let span = info_span!("Initialization of OnceLock holding project directory path");
-        span.in_scope(|| {
-            PROJECT_DIR
-                .set(project_dir.clone())
-                .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
-                .map_err(|_| anyhow!("Failed to set value of OnceLock."))
-        })?;
-    }
-
-    {
-        let span = info_span!("Initialization of OnceLock holding file names to exclude");
-        span.in_scope(|| {
-            EXCLUDE_FILES_BY_NAME
-                .set(exclude())
-                .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
-                .map_err(|_| anyhow!("Failed to set value of OnceLock."))
-        })?;
-    }
-
-    // FsEvent takes strings as arguments. We always want to use the canonical path,
-    // and because of that we have to convert back to String from PathBuf.
-    let pdir = project_dir
-        .clone()
-        .into_os_string()
-        .into_string()
-        .inspect_err(|e| error!(os_string = ?e, "Fatal: Failed to convert PathBuf to String."))
-        .map_err(|_| anyhow!("Failed to convert PathBuf to String."))?;
-
-    /*
-     * We monitor FS events in the project dir using the
-     * Apple File System Events API via the fsevent crate.
-     *
-     * XXX: Hardlink creation does not result in any corresponding event.
-     *      Issue for this filed at https://github.com/octplane/fsevent-rust/issues/27
-     *
-     * XXX: When files are moved, two events are generated. One for the source file path,
-     *      and one for the target file path. Because we are choosing to subscribe to events
-     *      for the project directory only, we don't see "the other half" of a pair of events
-     *      where a file is moved into or out of the project directory. Now, we could of course
-     *      monitor the whole file system, and do our best to correlate all moves that affect us.
-     *      But really, that's a lot of work for little actual benefit.
-     *
-     *      So what we are going to do is, anytime a file or directory is moved into, within, or out
-     *      of the project directory, we create a temporary file, recursively rescan the project
-     *      directory and "fast-forward" to the point in the stream where we see the creation of
-     *      our temporary file. We do that same temporary file thing for the initial scan as well.
-     *
-     *      And if you think it's weird to do it that way, keep in mind that:
-     *
-     *        1. The information provided by the FSE API is only advisory anyway, and
-     *
-     *        2. Our use-case revolves mainly around files being written to most of the
-     *           time, and sometimes being created or deleted, and normally not being moved.
-     *           So, whereas in contexts where there is a lot of moving going on it might
-     *           not make so much sense to do it like this, it does in our case and also
-     *           helps keep the picture that we have of our project dir over time robust
-     *           (i.e. correctly corresponding to actual reality).
-     *
-     *      So all in all this is actually a good solution we have here, I think.
-     */
-
-    let (project_out_fs_event_tx, project_out_fs_event_rx) = std::sync::mpsc::channel();
-    let barrier = Arc::new(Barrier::new(2));
-
-    let project_out_fs_event_observer_handle = {
-        let pdir = pdir.clone();
-        let barrier = barrier.clone();
-        std::thread::spawn(move || {
-            let span = info_span!("FS event observer thread");
-            span.in_scope(|| {
-                debug!("FS event observer thread started.");
-                let project_out_fs_observer = fsevent::FsEvent::new(vec![pdir]);
-
-                // Rendezvous with main thread, so that main thread will wait before proceeding to create marker tempfile A.
-                debug!("About to rendezvous with main thread");
-                barrier.wait();
-
-                project_out_fs_observer.observe(project_out_fs_event_tx);
-                // Log at warn level so that we can spot in logs if FS observer thread stops before we expect it to.
-                warn!("FS event observer thread stopping.");
-            })
-        })
-    };
-
-    // Create a unique temporary file in project dir, that we will use for figuring out
-    // what to do with events occurring around the time between the start and end
-    // of our initial full scan of the project directory.
-    let tmpfile_marker_a = {
-        let span = info_span!("Create marker tempfile A");
-
-        span.in_scope(|| {
-            // Rendezvous with FS observer thread, so that main thread will wait before proceeding to create marker tempfile A.
-            debug!("About to rendezvous with FS observer thread");
-            barrier.wait();
-
-            // Sleep a little bit extra, to give time for FS observer in FS observer thread to have started.
-            debug!("Initiating brief sleep for main thread");
-            std::thread::sleep(Duration::from_millis(250));
-
-            let tmpfile_marker_a = tempfile::tempfile_in(&project_dir)
-                .inspect_err(|e| error!(err = ?e, "Failed to create temporary file."))?;
-            debug!(?tmpfile_marker_a, "Created marker tempfile A.");
-            Ok::<_, std::io::Error>(tmpfile_marker_a)
-        })
-    }?;
-
-    {
-        let span = info_span!("Render internal index page");
-        span.in_scope(|| {
-            let internal_index_page = StatusWebUiIndex {
-                project_dir: &pdir,
-                color_scheme: args.color_scheme,
+            let args = {
+                let span = info_span!("Command-line argument parsing");
+                span.in_scope(|| {
+                    let args = Cli::parse();
+                    debug!("Finished parsing command-line arguments");
+                    args
+                })
             };
-            let internal_index_page_rendered = internal_index_page.render()?.as_bytes().to_vec();
-            INTERNAL_INDEX_PAGE
-                .set(internal_index_page_rendered)
-                .inspect_err(|e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."))
-                .map_err(|_| anyhow!("Failed to set value of OnceLock."))?;
-            debug!("Successfully rendered internal index page.");
-            Ok::<_, anyhow::Error>(())
+
+            // Values taken from command-line arguments.
+            // In the future we may wish to additionally be able to read these from config file instead, etc.
+            // So it makes sense to gather all accesses to `args` in one place, so that we don't have to jump
+            // all over the place in the future if we create a mechanisms for loading values from multiple
+            // sources with some preference order.
+            // For example, a preference order like: Command line args > Environment variables > Config file.
+            // (Where "a > b > c" means "a" is preferred over "b", is preferred over "c".)
+            let project_dir = args.dir;
+            let open_pages_in_browser = args.open;
+            let status_addr = SocketAddr::new(args.status_listen_addr, args.status_listen_port);
+            let project_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
+            let color_scheme = args.color_scheme;
+
+            let project_dir = {
+                let span = info_span!("Project directory path canonicalization");
+                span.in_scope(|| {
+                    let project_dir = PathBuf::from(project_dir);
+                    let project_dir = project_dir
+                        .canonicalize()
+                        .inspect_err(
+                            |e| error!(err = ?e, ?project_dir, "Fatal: Failed to canonicalize project dir path."),
+                        )
+                        .with_context(|| format!("Failed to canonicalize project dir path: {project_dir:?}"))?;
+
+                    if !project_dir.is_dir() {
+                        error!(?project_dir, "Fatal: File is not a directory: Project dir path.");
+                        Err(anyhow!("File is not a directory: Project dir path: {project_dir:?}"))
+                    } else {
+                        debug!(?project_dir, "Successfully canonicalized project dir path.");
+                        Ok(project_dir)
+                    }
+                })
+            }?;
+
+            {
+                let span = info_span!("Initialization of OnceLock holding project directory path");
+                span.in_scope(|| {
+                    PROJECT_DIR
+                        .set(project_dir.clone())
+                        .inspect_err(
+                            |e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."),
+                        )
+                        .map_err(|_| anyhow!("Failed to set value of OnceLock."))
+                })?;
+            }
+
+            {
+                let span = info_span!("Initialization of OnceLock holding file names to exclude");
+                span.in_scope(|| {
+                    EXCLUDE_FILES_BY_NAME
+                        .set(exclude())
+                        .inspect_err(
+                            |e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."),
+                        )
+                        .map_err(|_| anyhow!("Failed to set value of OnceLock."))
+                })?;
+            }
+
+            // FsEvent takes strings as arguments. We always want to use the canonical path,
+            // and because of that we have to convert back to String from PathBuf.
+            let pdir = project_dir
+                .clone()
+                .into_os_string()
+                .into_string()
+                .inspect_err(|e| error!(os_string = ?e, "Fatal: Failed to convert PathBuf to String."))
+                .map_err(|_| anyhow!("Failed to convert PathBuf to String."))?;
+
+            /*
+             * We monitor FS events in the project dir using the
+             * Apple File System Events API via the fsevent crate.
+             *
+             * XXX: Hardlink creation does not result in any corresponding event.
+             *      Issue for this filed at https://github.com/octplane/fsevent-rust/issues/27
+             *
+             * XXX: When files are moved, two events are generated. One for the source file path,
+             *      and one for the target file path. Because we are choosing to subscribe to events
+             *      for the project directory only, we don't see "the other half" of a pair of events
+             *      where a file is moved into or out of the project directory. Now, we could of course
+             *      monitor the whole file system, and do our best to correlate all moves that affect us.
+             *      But really, that's a lot of work for little actual benefit.
+             *
+             *      So what we are going to do is, anytime a file or directory is moved into, within, or out
+             *      of the project directory, we create a temporary file, recursively rescan the project
+             *      directory and "fast-forward" to the point in the stream where we see the creation of
+             *      our temporary file. We do that same temporary file thing for the initial scan as well.
+             *
+             *      And if you think it's weird to do it that way, keep in mind that:
+             *
+             *        1. The information provided by the FSE API is only advisory anyway, and
+             *
+             *        2. Our use-case revolves mainly around files being written to most of the
+             *           time, and sometimes being created or deleted, and normally not being moved.
+             *           So, whereas in contexts where there is a lot of moving going on it might
+             *           not make so much sense to do it like this, it does in our case and also
+             *           helps keep the picture that we have of our project dir over time robust
+             *           (i.e. correctly corresponding to actual reality).
+             *
+             *      So all in all this is actually a good solution we have here, I think.
+             */
+
+            let (project_out_fs_event_tx, project_out_fs_event_rx) = std::sync::mpsc::channel();
+            let barrier = Arc::new(Barrier::new(2));
+
+            let project_out_fs_event_observer_handle = {
+                let pdir = pdir.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let span = info_span!("FS event observer thread");
+                    span.in_scope(|| {
+                        debug!("FS event observer thread started.");
+                        let project_out_fs_observer = fsevent::FsEvent::new(vec![pdir]);
+
+                        // Rendezvous with main thread, so that main thread will wait before proceeding to create marker tempfile A.
+                        debug!("About to rendezvous with main thread");
+                        barrier.wait();
+
+                        project_out_fs_observer.observe(project_out_fs_event_tx);
+                        // Log at warn level so that we can spot in logs if FS observer thread stops before we expect it to.
+                        warn!("FS event observer thread stopping.");
+                    })
+                })
+            };
+
+            // Create a unique temporary file in project dir, that we will use for figuring out
+            // what to do with events occurring around the time between the start and end
+            // of our initial full scan of the project directory.
+            let tmpfile_marker_a = {
+                let span = info_span!("Create marker tempfile A");
+
+                span.in_scope(|| {
+                    // Rendezvous with FS observer thread, so that main thread will wait before proceeding to create marker tempfile A.
+                    debug!("About to rendezvous with FS observer thread");
+                    barrier.wait();
+
+                    // Sleep a little bit extra, to give time for FS observer in FS observer thread to have started.
+                    debug!("Initiating brief sleep for main thread");
+                    std::thread::sleep(Duration::from_millis(250));
+
+                    let tmpfile_marker_a = tempfile::tempfile_in(&project_dir)
+                        .inspect_err(|e| error!(err = ?e, "Failed to create temporary file."))?;
+                    debug!(?tmpfile_marker_a, "Created marker tempfile A.");
+                    Ok::<_, std::io::Error>(tmpfile_marker_a)
+                })
+            }?;
+
+            {
+                let span = info_span!("Render internal index page");
+                span.in_scope(|| {
+                    let internal_index_page = StatusWebUiIndex {
+                        project_dir: &pdir,
+                        color_scheme,
+                    };
+                    let internal_index_page_rendered =
+                        internal_index_page.render()?.as_bytes().to_vec();
+                    INTERNAL_INDEX_PAGE
+                        .set(internal_index_page_rendered)
+                        .inspect_err(
+                            |e| error!(existing_value = ?e, "Fatal: OnceLock has existing value."),
+                        )
+                        .map_err(|_| anyhow!("Failed to set value of OnceLock."))?;
+                    debug!("Successfully rendered internal index page.");
+                    Ok::<_, anyhow::Error>(())
+                })
+            }?;
+
+            let duration_synchronous_setup = Instant::now() - t_start_synchronous_setup;
+            debug!(?duration_synchronous_setup, "Finished synchronous portion of program setup.");
+
+            Ok::<_, anyhow::Error>(SynchronousSetupValues {
+                ctrl_c,
+                project_dir,
+                project_out_fs_event_rx,
+                open_pages_in_browser,
+                status_addr,
+                project_addr,
+                project_out_fs_event_observer_handle,
+            })
         })
     }?;
 
-    let status_addr = SocketAddr::new(args.status_listen_addr, args.status_listen_port);
-    let project_addr = SocketAddr::new(args.project_listen_addr, args.project_listen_port);
+    let SynchronousSetupValues {
+        ctrl_c,
+        project_dir,
+        project_out_fs_event_rx,
+        open_pages_in_browser,
+        status_addr,
+        project_addr,
+        project_out_fs_event_observer_handle,
+    } = synchronous_setup;
 
     /*
      * Anything async goes here.
@@ -445,7 +506,7 @@ fn main() -> anyhow::Result<()> {
 
         info!("Starting status and project servers.");
         // Skip printing hints if we are going to attempt to open the web browser for the user.
-        if !args.open {
+        if !open_pages_in_browser {
             info!("Access your project through the http-horse status user interface.");
             info!(
                 status_url,
@@ -457,7 +518,7 @@ fn main() -> anyhow::Result<()> {
         // If we fail to open any of the URLs, print corresponding error and instruct the user
         // to manually open each of the URLs that we failed to open for them.
         // These errors are considered non-fatal, and program execution continues.
-        if args.open {
+        if open_pages_in_browser {
             info!("Attempting to open http-horse status page in web browser.");
             if let Err(e) = opener::open(status_url) {
                 error!(?e, "Failed to open http-horse status page in web browser.");
